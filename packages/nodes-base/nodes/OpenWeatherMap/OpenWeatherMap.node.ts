@@ -1,31 +1,30 @@
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-import {
 	IDataObject,
+	IHttpRequestOptions,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeApiError,
-	NodeOperationError,
+	JsonObject,
+	WithRequestTarget,
 } from 'n8n-workflow';
-
-import { OptionsWithUri } from 'request';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError, requestUrl } from 'n8n-workflow';
 
 export class OpenWeatherMap implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'OpenWeatherMap',
 		name: 'openWeatherMap',
-		icon: 'fa:sun',
+		icon: 'file:openWeatherMap.svg',
 		group: ['input'],
-		version: 1,
+		// 1.1 marks support for the credential base URL. The AI gateway uses it as the minimum version.
+		version: [1, 1.1],
 		description: 'Gets current and future weather information',
 		defaults: {
 			name: 'OpenWeatherMap',
-			color: '#554455',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'openWeatherMapApi',
@@ -37,20 +36,22 @@ export class OpenWeatherMap implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Current Weather',
 						value: 'currentWeather',
 						description: 'Returns the current weather data',
+						action: 'Return current weather data',
 					},
 					{
-						name: '5 day Forecast',
+						name: '5 Day Forecast',
 						value: '5DayForecast',
 						description: 'Returns the weather data for the next 5 days',
+						action: 'Return weather data for the next 5 days',
 					},
 				],
 				default: 'currentWeather',
-				description: 'The operation to perform.',
 			},
 			{
 				displayName: 'Format',
@@ -74,7 +75,7 @@ export class OpenWeatherMap implements INodeType {
 					},
 				],
 				default: 'metric',
-				description: 'The format in which format the data should be returned.',
+				description: 'The format in which format the data should be returned',
 			},
 
 			// ----------------------------------
@@ -103,7 +104,7 @@ export class OpenWeatherMap implements INodeType {
 					},
 				],
 				default: 'cityName',
-				description: 'How to define the location for which to return the weather.',
+				description: 'How to define the location for which to return the weather',
 			},
 
 			{
@@ -115,12 +116,10 @@ export class OpenWeatherMap implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						locationSelection: [
-							'cityName',
-						],
+						locationSelection: ['cityName'],
 					},
 				},
-				description: 'The name of the city to return the weather of.',
+				description: 'The name of the city to return the weather of',
 			},
 
 			{
@@ -131,12 +130,11 @@ export class OpenWeatherMap implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						locationSelection: [
-							'cityId',
-						],
+						locationSelection: ['cityId'],
 					},
 				},
-				description: 'The id of city to return the weather of. List can be downloaded here: http://bulk.openweathermap.org/sample/',
+				description:
+					'The ID of city to return the weather of. List can be downloaded here: http://bulk.openweathermap.org/sample/.',
 			},
 
 			{
@@ -148,12 +146,10 @@ export class OpenWeatherMap implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						locationSelection: [
-							'coordinates',
-						],
+						locationSelection: ['coordinates'],
 					},
 				},
-				description: 'The latitude of the location to return the weather of.',
+				description: 'The latitude of the location to return the weather of',
 			},
 
 			{
@@ -165,12 +161,10 @@ export class OpenWeatherMap implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						locationSelection: [
-							'coordinates',
-						],
+						locationSelection: ['coordinates'],
 					},
 				},
-				description: 'The longitude of the location to return the weather of.',
+				description: 'The longitude of the location to return the weather of',
 			},
 
 			{
@@ -182,12 +176,11 @@ export class OpenWeatherMap implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						locationSelection: [
-							'zipCode',
-						],
+						locationSelection: ['zipCode'],
 					},
 				},
-				description: 'The id of city to return the weather of. List can be downloaded here: http://bulk.openweathermap.org/sample/',
+				description:
+					'The ID of city to return the weather of. List can be downloaded here: http://bulk.openweathermap.org/sample/.',
 			},
 
 			{
@@ -196,25 +189,23 @@ export class OpenWeatherMap implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder: 'en',
-				required: false,
 				description: 'The two letter language code to get your output in (eg. en, de, ...).',
 			},
-
 		],
 	};
 
-
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const returnData: IDataObject[] = [];
+		const returnData: INodeExecutionData[] = [];
 
 		const credentials = await this.getCredentials('openWeatherMapApi');
+		const baseUrl = (
+			typeof credentials.url === 'string' && credentials.url.trim()
+				? credentials.url.trim()
+				: 'https://api.openweathermap.org'
+		).replace(/\/+$/, '');
 
-		if (credentials === undefined) {
-			throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-		}
-
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const operation = this.getNodeParameter('operation', 0);
 
 		let endpoint = '';
 		let locationSelection;
@@ -223,12 +214,9 @@ export class OpenWeatherMap implements INodeType {
 		let qs: IDataObject;
 
 		for (let i = 0; i < items.length; i++) {
-
 			try {
-
 				// Set base data
 				qs = {
-					APPID: credentials.accessToken,
 					units: this.getNodeParameter('format', i) as string,
 				};
 
@@ -244,7 +232,11 @@ export class OpenWeatherMap implements INodeType {
 				} else if (locationSelection === 'zipCode') {
 					qs.zip = this.getNodeParameter('zipCode', i) as string;
 				} else {
-					throw new NodeOperationError(this.getNode(), `The locationSelection "${locationSelection}" is not known!`);
+					throw new NodeOperationError(
+						this.getNode(),
+						`The locationSelection "${locationSelection}" is not known!`,
+						{ itemIndex: i },
+					);
 				}
 
 				// Get the language
@@ -266,35 +258,44 @@ export class OpenWeatherMap implements INodeType {
 
 					endpoint = 'forecast';
 				} else {
-					throw new NodeOperationError(this.getNode(), `The operation "${operation}" is not known!`);
+					throw new NodeOperationError(
+						this.getNode(),
+						`The operation "${operation}" is not known!`,
+						{ itemIndex: i },
+					);
 				}
-
-				const options: OptionsWithUri = {
-					method: 'GET',
-					qs,
-					uri: `https://api.openweathermap.org/data/2.5/${endpoint}`,
-					json: true,
-				};
 
 				let responseData;
 				try {
-					responseData = await this.helpers.request(options);
+					const options: WithRequestTarget<IHttpRequestOptions> = {
+						method: 'GET',
+						qs,
+						url: requestUrl`${baseUrl}/data/2.5/${endpoint}`,
+						json: true,
+					};
+					responseData = await this.helpers.httpRequestWithAuthentication.call(
+						this,
+						'openWeatherMapApi',
+						options,
+					);
 				} catch (error) {
-					throw new NodeApiError(this.getNode(), error);
+					throw new NodeApiError(this.getNode(), error as JsonObject);
 				}
 
-
-				returnData.push(responseData as IDataObject);
-
+				const executionData = this.helpers.constructExecutionMetaData(
+					this.helpers.returnJsonArray(responseData as IDataObject),
+					{ itemData: { item: i } },
+				);
+				returnData.push(...executionData);
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({json:{ error: error.message }});
+					returnData.push({ json: { error: error.message } });
 					continue;
 				}
 				throw error;
 			}
 		}
 
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

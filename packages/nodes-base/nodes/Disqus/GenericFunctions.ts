@@ -1,54 +1,42 @@
-import { OptionsWithUri } from 'request';
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	IHookFunctions,
+	IHttpRequestMethods,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-import { IDataObject, NodeApiError, NodeOperationError, } from 'n8n-workflow';
+	IRequestOptions,
+	JsonObject,
+	RequestPath,
+	WithRequestTarget,
+} from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 export async function disqusApiRequest(
-		this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions,
-		method: string,
-		qs: IDataObject = {},
-		uri?: string,
-		body: IDataObject = {},
-		option: IDataObject = {},
-	): Promise<any> { // tslint:disable-line:no-any
-
-	const credentials = await this.getCredentials('disqusApi') as IDataObject;
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	qs: IDataObject = {},
+	uri: RequestPath,
+	body: IDataObject = {},
+): Promise<any> {
+	const credentials = await this.getCredentials<{ accessToken: string }>('disqusApi');
 	qs.api_key = credentials.accessToken;
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
 
-	// Convert to query string into a format the API can read
-	const queryStringElements: string[] = [];
-	for (const key of Object.keys(qs)) {
-		if (Array.isArray(qs[key])) {
-			(qs[key] as string[]).forEach(value => {
-				queryStringElements.push(`${key}=${value}`);
-			});
-		} else {
-			queryStringElements.push(`${key}=${qs[key]}`);
-		}
-	}
-
-	let options: OptionsWithUri = {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		body,
-		uri: `https://disqus.com/api/3.0/${uri}?${queryStringElements.join('&')}`,
+		qs,
+		qsStringifyOptions: { arrayFormat: 'repeat' },
+		uri: requestUrl`https://disqus.com/api/3.0/${uri}`,
 		json: true,
 	};
 
-	options = Object.assign({}, options, option);
-	if (Object.keys(options.body).length === 0) {
+	if (Object.keys(options.body as IDataObject).length === 0) {
 		delete options.body;
 	}
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
@@ -57,29 +45,20 @@ export async function disqusApiRequest(
  * and return all results
  */
 export async function disqusApiRequestAllItems(
-		this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions,
-		method: string,
-		qs: IDataObject = {},
-		uri?: string,
-		body: IDataObject = {},
-		option: IDataObject = {},
-	): Promise<any> { // tslint:disable-line:no-any
-
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	qs: IDataObject = {},
+	uri: RequestPath,
+	body: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
 
-	try {
-		do {
-			responseData = await disqusApiRequest.call(this, method, qs, uri, body, option);
-			qs.cursor = responseData.cursor.id;
-			returnData.push.apply(returnData, responseData.response);
-		} while (
-			responseData.cursor.more === true &&
-			responseData.cursor.hasNext === true
-		);
-		return returnData;
-		} catch(error) {
-		throw error;
-	}
+	do {
+		responseData = await disqusApiRequest.call(this, method, qs, uri, body);
+		qs.cursor = responseData.cursor.id;
+		returnData.push.apply(returnData, responseData.response as IDataObject[]);
+	} while (responseData.cursor.more === true && responseData.cursor.hasNext === true);
+	return returnData;
 }

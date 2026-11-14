@@ -1,51 +1,53 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	JsonObject,
+	IRequestOptions,
+	IHttpRequestMethods,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function humanticAiApiRequest(this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, qs: IDataObject = {}, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function humanticAiApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+
+	body: any = {},
+	qs: IDataObject = {},
+	option: Pick<IRequestOptions, 'formData'> = {},
+): Promise<any> {
 	try {
 		const credentials = await this.getCredentials('humanticAiApi');
-		if (credentials === undefined) {
-			throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-		}
-		let options: OptionsWithUri = {
+		let options = {
 			headers: {
 				'Content-Type': 'application/json',
 			},
 			method,
 			qs,
 			body,
-			uri: `https://api.humantic.ai/v1${resource}`,
+			uri: requestUrl`https://api.humantic.ai/v1${resource}`,
 			json: true,
-		};
+		} satisfies WithRequestTarget<IRequestOptions, 'uri'>;
 
 		options = Object.assign({}, options, option);
 		options.qs.apikey = credentials.apiKey;
 
-		if (Object.keys(options.body).length === 0) {
+		if (Object.keys(options.body as IDataObject).length === 0) {
 			delete options.body;
 		}
 
-		const response = await this.helpers.request!(options);
+		const response = await this.helpers.request(options);
 
 		if (response.data && response.data.status === 'error') {
-			throw new NodeApiError(this.getNode(), response.data);
+			throw new NodeApiError(this.getNode(), response.data as JsonObject);
 		}
 
 		return response;
-
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }

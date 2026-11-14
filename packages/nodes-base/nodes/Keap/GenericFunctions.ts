@@ -1,50 +1,59 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import { snakeCase } from 'change-case';
+import type {
+	IDataObject,
 	IExecuteFunctions,
 	IHookFunctions,
+	IHttpRequestMethods,
 	ILoadOptionsFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError
+	JsonObject,
+	LegacyRequestOptions,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-import {
-	snakeCase,
-} from 'change-case';
+export async function keapApiRequest(
+	this: IWebhookFunctions | IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
 
-export async function keapApiRequest(this: IWebhookFunctions | IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, qs: IDataObject = {}, uri?: string, headers: IDataObject = {}, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-	let options: OptionsWithUri = {
+	body: any = {},
+	qs: IDataObject = {},
+	uri?: string,
+	headers: IDataObject = {},
+): Promise<any> {
+	const options: LegacyRequestOptions = {
 		headers: {
 			'Content-Type': 'application/json',
 		},
 		method,
 		body,
 		qs,
-		uri: uri || `https://api.infusionsoft.com/crm/rest/v1${resource}`,
+		...(uri ? { uri } : { uri: requestUrl`https://api.infusionsoft.com/crm/rest/v1${resource}` }),
 		json: true,
 	};
 	try {
-		options = Object.assign({}, options, option);
 		if (Object.keys(headers).length !== 0) {
 			options.headers = Object.assign({}, options.headers, headers);
 		}
-		if (Object.keys(body).length === 0) {
+		if (Object.keys(body as IDataObject).length === 0) {
 			delete options.body;
 		}
-		//@ts-ignore
 		return await this.helpers.requestOAuth2.call(this, 'keapOAuth2Api', options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function keapApiRequestAllItems(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, propertyName: string, method: string, endpoint: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function keapApiRequestAllItems(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -54,10 +63,8 @@ export async function keapApiRequestAllItems(this: IHookFunctions | IExecuteFunc
 	do {
 		responseData = await keapApiRequest.call(this, method, endpoint, body, query, uri);
 		uri = responseData.next;
-		returnData.push.apply(returnData, responseData[propertyName]);
-	} while (
-		returnData.length < responseData.count
-	);
+		returnData.push.apply(returnData, responseData[propertyName] as IDataObject[]);
+	} while (returnData.length < responseData.count);
 
 	return returnData;
 }

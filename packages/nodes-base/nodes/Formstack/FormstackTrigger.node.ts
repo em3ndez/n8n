@@ -1,22 +1,17 @@
-import {
+import { randomBytes } from 'crypto';
+import type {
 	IHookFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookResponseData,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	apiRequest,
-	getFields,
-	getForms,
-	getSubmission,
-	IFormstackWebhookResponseBody
-} from './GenericFunctions';
+import { verifySignature } from './FormstackTriggerHelpers';
+import type { IFormstackWebhookResponseBody } from './GenericFunctions';
+import { apiRequest, getForms } from './GenericFunctions';
 
 export class FormstackTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -29,19 +24,16 @@ export class FormstackTrigger implements INodeType {
 		description: 'Starts the workflow on a Formstack form submission.',
 		defaults: {
 			name: 'Formstack Trigger',
-			color: '#21b573',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'formstackApi',
 				required: true,
 				displayOptions: {
 					show: {
-						authentication: [
-							'accessToken',
-						],
+						authentication: ['accessToken'],
 					},
 				},
 			},
@@ -50,9 +42,7 @@ export class FormstackTrigger implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						authentication: [
-							'oAuth2',
-						],
+						authentication: ['oAuth2'],
 					},
 				},
 			},
@@ -81,10 +71,9 @@ export class FormstackTrigger implements INodeType {
 					},
 				],
 				default: 'accessToken',
-				description: '',
 			},
 			{
-				displayName: 'Form Name/ID',
+				displayName: 'Form Name or ID',
 				name: 'formId',
 				type: 'options',
 				typeOptions: {
@@ -92,14 +81,16 @@ export class FormstackTrigger implements INodeType {
 				},
 				default: '',
 				required: true,
-				description: 'The Formstack form to monitor for new submissions',
+				description:
+					'The Formstack form to monitor for new submissions. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
-				displayName: 'Simplify Response',
+				displayName: 'Simplify',
 				name: 'simple',
 				type: 'boolean',
 				default: true,
-				description: 'When set to true a simplify version of the response will be used else the raw data.',
+				description:
+					'Whether to return a simplified version of the response instead of the raw data',
 			},
 		],
 	};
@@ -110,7 +101,6 @@ export class FormstackTrigger implements INodeType {
 		},
 	};
 
-	// @ts-ignore
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -119,7 +109,7 @@ export class FormstackTrigger implements INodeType {
 
 				const formId = this.getNodeParameter('formId') as string;
 
-				const endpoint = `form/${formId}/webhook.json`;
+				const endpoint = requestPath`form/${formId}/webhook.json`;
 
 				const { webhooks } = await apiRequest.call(this, 'GET', endpoint);
 
@@ -137,37 +127,40 @@ export class FormstackTrigger implements INodeType {
 
 				const formId = this.getNodeParameter('formId') as string;
 
-				const endpoint = `form/${formId}/webhook.json`;
+				const endpoint = requestPath`form/${formId}/webhook.json`;
 
-				// TODO: Add handshake key support
+				const webhookSecret = randomBytes(32).toString('hex');
+
 				const body = {
 					url: webhookUrl,
 					standardize_field_values: true,
 					include_field_type: true,
 					content_type: 'json',
+					hmac_secret: webhookSecret,
 				};
 
 				const response = await apiRequest.call(this, 'POST', endpoint, body);
 
 				const webhookData = this.getWorkflowStaticData('node');
 				webhookData.webhookId = response.id;
+				webhookData.webhookSecret = webhookSecret;
 				return true;
 			},
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 
 				if (webhookData.webhookId !== undefined) {
-					const endpoint = `webhook/${webhookData.webhookId}.json`;
-
 					try {
+						const endpoint = requestPath`webhook/${webhookData.webhookId}.json`;
 						const body = {};
 						await apiRequest.call(this, 'DELETE', endpoint, body);
 					} catch (e) {
 						return false;
 					}
 					// Remove from the static workflow data so that it is clear
-					// that no webhooks are registred anymore
+					// that no webhooks are registered anymore
 					delete webhookData.webhookId;
+					delete webhookData.webhookSecret;
 				}
 
 				return true;
@@ -175,9 +168,16 @@ export class FormstackTrigger implements INodeType {
 		},
 	};
 
-	// @ts-ignore
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
-		const bodyData = (this.getBodyData() as unknown) as IFormstackWebhookResponseBody;
+		if (!verifySignature.call(this)) {
+			const res = this.getResponseObject();
+			res.status(401).send('Unauthorized').end();
+			return {
+				noWebhookResponse: true,
+			};
+		}
+
+		const bodyData = this.getBodyData() as unknown as IFormstackWebhookResponseBody;
 		const simple = this.getNodeParameter('simple') as string;
 
 		const response = bodyData as unknown as IDataObject;
@@ -191,9 +191,7 @@ export class FormstackTrigger implements INodeType {
 		}
 
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray([response as unknown as IDataObject]),
-			],
+			workflowData: [this.helpers.returnJsonArray([response as unknown as IDataObject])],
 		};
 	}
 }

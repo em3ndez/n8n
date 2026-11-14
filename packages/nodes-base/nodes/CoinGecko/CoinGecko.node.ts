@@ -1,8 +1,6 @@
-import {
+import moment from 'moment-timezone';
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
@@ -10,23 +8,11 @@ import {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	coinFields,
-	coinOperations,
-} from './CoinDescription';
-
-import {
-	eventFields,
-	eventOperations,
-} from './EventDescription';
-
-import {
-	coinGeckoApiRequest,
-	coinGeckoRequestAllItems,
-} from './GenericFunctions';
-
-import * as moment from 'moment-timezone';
+import { coinFields, coinOperations } from './CoinDescription';
+import { eventFields, eventOperations } from './EventDescription';
+import { coinGeckoApiRequest, coinGeckoRequestAllItems } from './GenericFunctions';
 
 export class CoinGecko implements INodeType {
 	description: INodeTypeDescription = {
@@ -39,15 +25,16 @@ export class CoinGecko implements INodeType {
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		defaults: {
 			name: 'CoinGecko',
-			color: '#8bc53f',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		properties: [
 			{
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Coin',
@@ -74,7 +61,7 @@ export class CoinGecko implements INodeType {
 				const currencies = await coinGeckoApiRequest.call(
 					this,
 					'GET',
-					'/simple/supported_vs_currencies',
+					requestPath`/simple/supported_vs_currencies`,
 				);
 				currencies.sort();
 				for (const currency of currencies) {
@@ -88,11 +75,7 @@ export class CoinGecko implements INodeType {
 
 			async getCoins(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const coins = await coinGeckoApiRequest.call(
-					this,
-					'GET',
-					'/coins/list',
-				);
+				const coins = await coinGeckoApiRequest.call(this, 'GET', requestPath`/coins/list`);
 				for (const coin of coins) {
 					returnData.push({
 						name: coin.symbol.toUpperCase(),
@@ -100,8 +83,12 @@ export class CoinGecko implements INodeType {
 					});
 				}
 				returnData.sort((a, b) => {
-					if (a.name < b.name) { return -1; }
-					if (a.name > b.name) { return 1; }
+					if (a.name < b.name) {
+						return -1;
+					}
+					if (a.name > b.name) {
+						return 1;
+					}
 					return 0;
 				});
 				return returnData;
@@ -109,11 +96,7 @@ export class CoinGecko implements INodeType {
 
 			async getExchanges(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const exchanges = await coinGeckoApiRequest.call(
-					this,
-					'GET',
-					'/exchanges/list',
-				);
+				const exchanges = await coinGeckoApiRequest.call(this, 'GET', requestPath`/exchanges/list`);
 				for (const exchange of exchanges) {
 					returnData.push({
 						name: exchange.name,
@@ -128,7 +111,7 @@ export class CoinGecko implements INodeType {
 				const countryCodes = await coinGeckoApiRequest.call(
 					this,
 					'GET',
-					'/events/countries',
+					requestPath`/events/countries`,
 				);
 				for (const code of countryCodes.data) {
 					if (!code.code) {
@@ -144,11 +127,7 @@ export class CoinGecko implements INodeType {
 
 			async getEventTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const eventTypes = await coinGeckoApiRequest.call(
-					this,
-					'GET',
-					'/events/types',
-				);
+				const eventTypes = await coinGeckoApiRequest.call(this, 'GET', requestPath`/events/types`);
 				for (const type of eventTypes.data) {
 					returnData.push({
 						name: type,
@@ -162,20 +141,19 @@ export class CoinGecko implements INodeType {
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const returnData: IDataObject[] = [];
-		const length = (items.length as unknown) as number;
+		const returnData: INodeExecutionData[] = [];
+		const length = items.length;
 		const qs: IDataObject = {};
 		let responseData;
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
 		for (let i = 0; i < length; i++) {
 			try {
 				if (resource === 'coin') {
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins__id_
 					//https://www.coingecko.com/api/documentations/v3#/contract/get_coins__id__contract__contract_address_
 					if (operation === 'get') {
-
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						qs.community_data = false;
 						qs.developer_data = false;
@@ -194,7 +172,7 @@ export class CoinGecko implements INodeType {
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/${coinId}`,
+								requestPath`/coins/${coinId}`,
 								{},
 								qs,
 							);
@@ -207,7 +185,7 @@ export class CoinGecko implements INodeType {
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/${platformId}/contract/${contractAddress}`,
+								requestPath`/coins/${platformId}/contract/${contractAddress}`,
 								{},
 								qs,
 							);
@@ -215,31 +193,29 @@ export class CoinGecko implements INodeType {
 					}
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins_list
 					if (operation === 'getAll') {
-
-						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const returnAll = this.getNodeParameter('returnAll', i);
 
 						let limit;
 
 						responseData = await coinGeckoApiRequest.call(
 							this,
 							'GET',
-							'/coins/list',
+							requestPath`/coins/list`,
 							{},
 							qs,
 						);
 
-						if (returnAll === false) {
-							limit = this.getNodeParameter('limit', i) as number;
+						if (!returnAll) {
+							limit = this.getNodeParameter('limit', i);
 							responseData = responseData.splice(0, limit);
 						}
 					}
 
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins_list
 					if (operation === 'market') {
-
-						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const returnAll = this.getNodeParameter('returnAll', i);
 						const baseCurrency = this.getNodeParameter('baseCurrency', i) as string;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						qs.vs_currency = baseCurrency;
 
@@ -254,19 +230,19 @@ export class CoinGecko implements INodeType {
 								this,
 								'',
 								'GET',
-								`/coins/markets`,
+								requestPath`/coins/markets`,
 								{},
 								qs,
 							);
 						} else {
-							const limit = this.getNodeParameter('limit', i) as number;
+							const limit = this.getNodeParameter('limit', i);
 
 							qs.per_page = limit;
 
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/markets`,
+								requestPath`/coins/markets`,
 								{},
 								qs,
 							);
@@ -276,10 +252,9 @@ export class CoinGecko implements INodeType {
 					//https://www.coingecko.com/api/documentations/v3#/simple/get_simple_price
 					//https://www.coingecko.com/api/documentations/v3#/simple/get_simple_token_price__id_
 					if (operation === 'price') {
-
 						const searchBy = this.getNodeParameter('searchBy', i) as string;
 						const quoteCurrencies = this.getNodeParameter('quoteCurrencies', i) as string[];
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						qs.vs_currencies = quoteCurrencies.join(',');
 
@@ -293,7 +268,7 @@ export class CoinGecko implements INodeType {
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								'/simple/price',
+								requestPath`/simple/price`,
 								{},
 								qs,
 							);
@@ -308,7 +283,7 @@ export class CoinGecko implements INodeType {
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/simple/token_price/${platformId}`,
+								requestPath`/simple/token_price/${platformId}`,
 								{},
 								qs,
 							);
@@ -317,10 +292,9 @@ export class CoinGecko implements INodeType {
 
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins__id__tickers
 					if (operation === 'ticker') {
-
-						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const returnAll = this.getNodeParameter('returnAll', i);
 						const coinId = this.getNodeParameter('coinId', i) as string;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						Object.assign(qs, options);
 
@@ -329,22 +303,21 @@ export class CoinGecko implements INodeType {
 						}
 
 						if (returnAll) {
-
 							responseData = await coinGeckoRequestAllItems.call(
 								this,
 								'tickers',
 								'GET',
-								`/coins/${coinId}/tickers`,
+								requestPath`/coins/${coinId}/tickers`,
 								{},
 								qs,
 							);
 						} else {
-							const limit = this.getNodeParameter('limit', i) as number;
+							const limit = this.getNodeParameter('limit', i);
 
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/${coinId}/tickers`,
+								requestPath`/coins/${coinId}/tickers`,
 								{},
 								qs,
 							);
@@ -356,10 +329,9 @@ export class CoinGecko implements INodeType {
 
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins__id__history
 					if (operation === 'history') {
-
 						const coinId = this.getNodeParameter('coinId', i) as string;
 						const date = this.getNodeParameter('date', i) as string;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						Object.assign(qs, options);
 
@@ -368,7 +340,7 @@ export class CoinGecko implements INodeType {
 						responseData = await coinGeckoApiRequest.call(
 							this,
 							'GET',
-							`/coins/${coinId}/history`,
+							requestPath`/coins/${coinId}/history`,
 							{},
 							qs,
 						);
@@ -377,7 +349,6 @@ export class CoinGecko implements INodeType {
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins__id__market_chart
 					//https://www.coingecko.com/api/documentations/v3#/contract/get_coins__id__contract__contract_address__market_chart_
 					if (operation === 'marketChart') {
-
 						let respData;
 
 						const searchBy = this.getNodeParameter('searchBy', i) as string;
@@ -393,7 +364,7 @@ export class CoinGecko implements INodeType {
 							respData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/${coinId}/market_chart`,
+								requestPath`/coins/${coinId}/market_chart`,
 								{},
 								qs,
 							);
@@ -406,7 +377,7 @@ export class CoinGecko implements INodeType {
 							respData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								`/coins/${platformId}/contract/${contractAddress}/market_chart`,
+								requestPath`/coins/${platformId}/contract/${contractAddress}/market_chart`,
 								{},
 								qs,
 							);
@@ -417,13 +388,17 @@ export class CoinGecko implements INodeType {
 							const [time, price] = respData.prices[idx];
 							const marketCaps = respData.market_caps[idx][1];
 							const totalVolume = respData.total_volumes[idx][1];
-							responseData.push({ time: moment(time).toISOString(), price, marketCaps, totalVolume } as IDataObject);
+							responseData.push({
+								time: moment(time as string).toISOString(),
+								price,
+								marketCaps,
+								totalVolume,
+							} as IDataObject);
 						}
 					}
 
 					//https://www.coingecko.com/api/documentations/v3#/coins/get_coins__id__ohlc
 					if (operation === 'candlestick') {
-
 						const baseCurrency = this.getNodeParameter('baseCurrency', i) as string;
 						const quoteCurrency = this.getNodeParameter('quoteCurrency', i) as string;
 						const days = this.getNodeParameter('days', i) as string;
@@ -434,14 +409,20 @@ export class CoinGecko implements INodeType {
 						responseData = await coinGeckoApiRequest.call(
 							this,
 							'GET',
-							`/coins/${baseCurrency}/ohlc`,
+							requestPath`/coins/${baseCurrency}/ohlc`,
 							{},
 							qs,
 						);
 
 						for (let idx = 0; idx < responseData.length; idx++) {
 							const [time, open, high, low, close] = responseData[idx];
-							responseData[idx] = { time: moment(time).toISOString(), open, high, low, close } as IDataObject;
+							responseData[idx] = {
+								time: moment(time as string).toISOString(),
+								open,
+								high,
+								low,
+								close,
+							} as IDataObject;
 						}
 					}
 				}
@@ -449,9 +430,8 @@ export class CoinGecko implements INodeType {
 				if (resource === 'event') {
 					//https://www.coingecko.com/api/documentations/v3#/events/get_events
 					if (operation === 'getAll') {
-
-						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const returnAll = this.getNodeParameter('returnAll', i);
+						const options = this.getNodeParameter('options', i);
 
 						Object.assign(qs, options);
 
@@ -460,19 +440,19 @@ export class CoinGecko implements INodeType {
 								this,
 								'data',
 								'GET',
-								'/events',
+								requestPath`/events`,
 								{},
 								qs,
 							);
 						} else {
-							const limit = this.getNodeParameter('limit', i) as number;
+							const limit = this.getNodeParameter('limit', i);
 
 							qs.per_page = limit;
 
 							responseData = await coinGeckoApiRequest.call(
 								this,
 								'GET',
-								'/events',
+								requestPath`/events`,
 								{},
 								qs,
 							);
@@ -484,20 +464,19 @@ export class CoinGecko implements INodeType {
 				if (resource === 'simple') {
 					//https://www.coingecko.com/api/documentations/v3#/simple/get_simple_price
 					if (operation === 'price') {
-
 						const ids = this.getNodeParameter('ids', i) as string;
 						const currencies = this.getNodeParameter('currencies', i) as string[];
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
-						qs.ids = ids,
-							qs.vs_currencies = currencies.join(',');
+						qs.ids = ids;
+						qs.vs_currencies = currencies.join(',');
 
 						Object.assign(qs, options);
 
 						responseData = await coinGeckoApiRequest.call(
 							this,
 							'GET',
-							'/simple/price',
+							requestPath`/simple/price`,
 							{},
 							qs,
 						);
@@ -505,11 +484,10 @@ export class CoinGecko implements INodeType {
 
 					//https://www.coingecko.com/api/documentations/v3#/simple/get_simple_token_price__id_
 					if (operation === 'tokenPrice') {
-
 						const id = this.getNodeParameter('id', i) as string;
 						const contractAddresses = this.getNodeParameter('contractAddresses', i) as string;
 						const currencies = this.getNodeParameter('currencies', i) as string[];
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 
 						qs.contract_addresses = contractAddresses;
 						qs.vs_currencies = currencies.join(',');
@@ -519,27 +497,27 @@ export class CoinGecko implements INodeType {
 						responseData = await coinGeckoApiRequest.call(
 							this,
 							'GET',
-							`/simple/token_price/${id}`,
+							requestPath`/simple/token_price/${id}`,
 							{},
 							qs,
 						);
 					}
 				}
 
-				if (Array.isArray(responseData)) {
-					returnData.push.apply(returnData, responseData as IDataObject[]);
-				} else if (responseData !== undefined) {
-					returnData.push(responseData as IDataObject);
-				}
+				const executionData = this.helpers.constructExecutionMetaData(
+					this.helpers.returnJsonArray(responseData as IDataObject[]),
+					{ itemData: { item: i } },
+				);
+				returnData.push(...executionData);
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					returnData.push({ error: error.message, json: {} });
 					continue;
 				}
 				throw error;
 			}
 		}
 
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

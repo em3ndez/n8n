@@ -1,44 +1,35 @@
-
-import {
+import moment from 'moment-timezone';
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	egoiApiRequest,
-	egoiApiRequestAllItems,
-	simplify,
-} from './GenericFunctions';
-
-import {
-	ICreateMemberBody,
-} from './Interfaces';
-
-import * as moment from 'moment-timezone';
+import { egoiApiRequest, egoiApiRequestAllItems, simplify } from './GenericFunctions';
+import type { ICreateMemberBody } from './Interfaces';
 
 export class Egoi implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'E-goi',
 		name: 'egoi',
-		icon: 'file:egoi.png',
+
+		icon: 'file:egoi.svg',
 		group: ['output'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Consume E-goi API',
 		defaults: {
 			name: 'E-goi',
-			color: '#4cacd6',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'egoiApi',
@@ -50,6 +41,7 @@ export class Egoi implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				required: true,
 				options: [
 					{
@@ -58,40 +50,43 @@ export class Egoi implements INodeType {
 					},
 				],
 				default: 'contact',
-				description: 'The resource to operate on.',
 			},
 			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				required: true,
 				options: [
 					{
 						name: 'Create',
 						value: 'create',
 						description: 'Create a member',
+						action: 'Create a member',
 					},
 					{
 						name: 'Get',
 						value: 'get',
 						description: 'Get a member',
+						action: 'Get a member',
 					},
 					{
-						name: 'Get All',
+						name: 'Get Many',
 						value: 'getAll',
-						description: 'Get all members',
+						description: 'Get many members',
+						action: 'Get many members',
 					},
 					{
 						name: 'Update',
 						value: 'update',
 						description: 'Update a member',
+						action: 'Update a member',
 					},
 				],
 				default: 'create',
-				description: 'The operation to perform.',
 			},
 			{
-				displayName: 'List ID',
+				displayName: 'List Name or ID',
 				name: 'list',
 				type: 'options',
 				typeOptions: {
@@ -99,30 +94,25 @@ export class Egoi implements INodeType {
 				},
 				displayOptions: {
 					show: {
-						operation: [
-							'getAll',
-							'create',
-							'update',
-							'get',
-						],
+						operation: ['getAll', 'create', 'update', 'get'],
 					},
 				},
 				default: '',
-				description: 'ID of list to operate on.',
+				description:
+					'ID of list to operate on. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Email',
 				name: 'email',
 				type: 'string',
+				placeholder: 'name@email.com',
 				displayOptions: {
 					show: {
-						operation: [
-							'create',
-						],
+						operation: ['create'],
 					},
 				},
 				default: '',
-				description: 'Email address for a subscriber.',
+				description: 'Email address for a subscriber',
 			},
 			{
 				displayName: 'Contact ID',
@@ -130,16 +120,12 @@ export class Egoi implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						resource: [
-							'contact',
-						],
-						operation: [
-							'update',
-						],
+						resource: ['contact'],
+						operation: ['update'],
 					},
 				},
 				default: '',
-				description: 'Contact ID of the subscriber.',
+				description: 'Contact ID of the subscriber',
 			},
 			{
 				displayName: 'Resolve Data',
@@ -147,14 +133,13 @@ export class Egoi implements INodeType {
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						operation: [
-							'create',
-							'update',
-						],
+						operation: ['create', 'update'],
 					},
 				},
 				default: true,
-				description: 'By default the response just includes the contact id. If this option gets activated, it will resolve the data automatically.',
+				// eslint-disable-next-line n8n-nodes-base/node-param-description-boolean-without-whether
+				description:
+					'By default the response just includes the contact ID. If this option gets activated, it will resolve the data automatically.',
 			},
 			{
 				displayName: 'Additional Fields',
@@ -163,12 +148,8 @@ export class Egoi implements INodeType {
 				placeholder: 'Add Field',
 				displayOptions: {
 					show: {
-						operation: [
-							'create',
-						],
-						resource: [
-							'contact',
-						],
+						operation: ['create'],
+						resource: ['contact'],
 					},
 				},
 				default: {},
@@ -178,14 +159,14 @@ export class Egoi implements INodeType {
 						name: 'birth_date',
 						type: 'dateTime',
 						default: '',
-						description: 'Birth date of a subscriber.',
+						description: 'Birth date of a subscriber',
 					},
 					{
 						displayName: 'Cellphone',
 						name: 'cellphone',
 						type: 'string',
 						default: '',
-						description: 'Cellphone of a subscriber.',
+						description: 'Cellphone of a subscriber',
 					},
 					{
 						displayName: 'Extra Fields',
@@ -205,14 +186,14 @@ export class Egoi implements INodeType {
 								},
 								values: [
 									{
-										displayName: 'Field ID',
+										displayName: 'Field Name or ID',
 										name: 'field_id',
 										type: 'options',
+										description:
+											'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 										typeOptions: {
 											loadOptionsMethod: 'getExtraFields',
-											loadOptionsDependsOn: [
-												'list',
-											],
+											loadOptionsDependsOn: ['list'],
 										},
 										default: '',
 									},
@@ -231,14 +212,14 @@ export class Egoi implements INodeType {
 						name: 'first_name',
 						type: 'string',
 						default: '',
-						description: 'Name of a subscriber.',
+						description: 'Name of a subscriber',
 					},
 					{
 						displayName: 'Last Name',
 						name: 'last_name',
 						type: 'string',
 						default: '',
-						description: 'Name of a subscriber.',
+						description: 'Name of a subscriber',
 					},
 					{
 						displayName: 'Status',
@@ -263,17 +244,18 @@ export class Egoi implements INodeType {
 							},
 						],
 						default: 'active',
-						description: `Subscriber's current status.`,
+						description: "Subscriber's current status",
 					},
 					{
-						displayName: 'Tags IDs',
+						displayName: 'Tag Names or IDs',
 						name: 'tagIds',
 						type: 'multiOptions',
 						typeOptions: {
 							loadOptionsMethod: 'getListTags',
 						},
 						default: [],
-						description: 'List of tag ids to be added',
+						description:
+							'List of tag IDs to be added. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 					},
 				],
 			},
@@ -288,9 +270,7 @@ export class Egoi implements INodeType {
 				default: {},
 				displayOptions: {
 					show: {
-						operation: [
-							'update',
-						],
+						operation: ['update'],
 					},
 				},
 				options: [
@@ -299,21 +279,22 @@ export class Egoi implements INodeType {
 						name: 'birth_date',
 						type: 'dateTime',
 						default: '',
-						description: 'Birth date of subscriber.',
+						description: 'Birth date of subscriber',
 					},
 					{
 						displayName: 'Cellphone',
 						name: 'cellphone',
 						type: 'string',
 						default: '',
-						description: 'Cellphone of subscriber.',
+						description: 'Cellphone of subscriber',
 					},
 					{
 						displayName: 'Email',
 						name: 'email',
 						type: 'string',
+						placeholder: 'name@email.com',
 						default: '',
-						description: 'Email address for subscriber.',
+						description: 'Email address for subscriber',
 					},
 					{
 						displayName: 'Extra Fields',
@@ -333,14 +314,14 @@ export class Egoi implements INodeType {
 								},
 								values: [
 									{
-										displayName: 'Field ID',
+										displayName: 'Field Name or ID',
 										name: 'field_id',
 										type: 'options',
+										description:
+											'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 										typeOptions: {
 											loadOptionsMethod: 'getExtraFields',
-											loadOptionsDependsOn: [
-												'list',
-											],
+											loadOptionsDependsOn: ['list'],
 										},
 										default: '',
 									},
@@ -359,14 +340,14 @@ export class Egoi implements INodeType {
 						name: 'first_name',
 						type: 'string',
 						default: '',
-						description: 'Name of subscriber.',
+						description: 'Name of subscriber',
 					},
 					{
 						displayName: 'Last Name',
 						name: 'last_name',
 						type: 'string',
 						default: '',
-						description: 'Name of subscriber.',
+						description: 'Name of subscriber',
 					},
 					{
 						displayName: 'Status',
@@ -389,20 +370,20 @@ export class Egoi implements INodeType {
 								name: 'Removed',
 								value: 'removed',
 							},
-
 						],
 						default: 'active',
-						description: `Subscriber's current status.`,
+						description: "Subscriber's current status",
 					},
 					{
-						displayName: 'Tags IDs',
+						displayName: 'Tag Names or IDs',
 						name: 'tagIds',
 						type: 'multiOptions',
 						typeOptions: {
 							loadOptionsMethod: 'getListTags',
 						},
 						default: [],
-						description: 'List of tag ids to be added',
+						description:
+							'List of tag IDs to be added. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 					},
 				],
 			},
@@ -422,12 +403,8 @@ export class Egoi implements INodeType {
 				],
 				displayOptions: {
 					show: {
-						operation: [
-							'get',
-						],
-						resource: [
-							'contact',
-						],
+						operation: ['get'],
+						resource: ['contact'],
 					},
 				},
 				default: 'id',
@@ -439,39 +416,28 @@ export class Egoi implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						resource: [
-							'contact',
-						],
-						operation: [
-							'get',
-						],
-						by: [
-							'id',
-						],
+						resource: ['contact'],
+						operation: ['get'],
+						by: ['id'],
 					},
 				},
 				default: '',
-				description: 'Contact ID of the subscriber.',
+				description: 'Contact ID of the subscriber',
 			},
 			{
 				displayName: 'Email',
 				name: 'email',
 				type: 'string',
+				placeholder: 'name@email.com',
 				displayOptions: {
 					show: {
-						resource: [
-							'contact',
-						],
-						operation: [
-							'get',
-						],
-						by: [
-							'email',
-						],
+						resource: ['contact'],
+						operation: ['get'],
+						by: ['email'],
 					},
 				},
 				default: '',
-				description: 'Email address for subscriber.',
+				description: 'Email address for subscriber',
 			},
 			{
 				displayName: 'Return All',
@@ -479,16 +445,12 @@ export class Egoi implements INodeType {
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						operation: [
-							'getAll',
-						],
-						resource: [
-							'contact',
-						],
+						operation: ['getAll'],
+						resource: ['contact'],
 					},
 				},
 				default: false,
-				description: 'If all results should be returned or only up to a given limit.',
+				description: 'Whether to return all results or only up to a given limit',
 			},
 			{
 				displayName: 'Limit',
@@ -496,15 +458,9 @@ export class Egoi implements INodeType {
 				type: 'number',
 				displayOptions: {
 					show: {
-						operation: [
-							'getAll',
-						],
-						resource: [
-							'contact',
-						],
-						returnAll: [
-							false,
-						],
+						operation: ['getAll'],
+						resource: ['contact'],
+						returnAll: [false],
 					},
 				},
 				typeOptions: {
@@ -512,25 +468,21 @@ export class Egoi implements INodeType {
 					maxValue: 500,
 				},
 				default: 100,
-				description: 'How many results to return.',
+				description: 'Max number of results to return',
 			},
 			{
-				displayName: 'Simplify Response',
+				displayName: 'Simplify',
 				name: 'simple',
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						operation: [
-							'get',
-							'getAll',
-						],
-						resource: [
-							'contact',
-						],
+						operation: ['get', 'getAll'],
+						resource: ['contact'],
 					},
 				},
 				default: true,
-				description: 'Return a simplified version of the response instead of the raw data.',
+				description:
+					'Whether to return a simplified version of the response instead of the raw data',
 			},
 		],
 	};
@@ -539,7 +491,7 @@ export class Egoi implements INodeType {
 		loadOptions: {
 			async getLists(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const lists = await egoiApiRequestAllItems.call(this, 'items', 'GET', '/lists');
+				const lists = await egoiApiRequestAllItems.call(this, 'items', 'GET', requestPath`/lists`);
 				for (const list of lists) {
 					const listName = list.internal_name;
 					const listId = list.list_id;
@@ -554,7 +506,11 @@ export class Egoi implements INodeType {
 			async getExtraFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
 				const listId = this.getCurrentNodeParameter('list');
-				const extraFields = await egoiApiRequest.call(this, 'GET', `/lists/${listId}/fields`);
+				const extraFields = await egoiApiRequest.call(
+					this,
+					'GET',
+					requestPath`/lists/${listId}/fields`,
+				);
 				for (const field of extraFields) {
 					if (field.type === 'extra') {
 						const fieldName = field.name;
@@ -570,7 +526,7 @@ export class Egoi implements INodeType {
 
 			async getListTags(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const tagList = await egoiApiRequestAllItems.call(this, 'items', 'GET', '/tags');
+				const tagList = await egoiApiRequestAllItems.call(this, 'items', 'GET', requestPath`/tags`);
 				for (const tag of tagList) {
 					const tagName = tag.name;
 					const tagId = tag.tag_id;
@@ -585,13 +541,12 @@ export class Egoi implements INodeType {
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
-
 		let responseData;
-		const returnData: IDataObject[] = [];
+		const returnData: INodeExecutionData[] = [];
 		const items = this.getInputData();
-		const length = items.length as unknown as number;
-		const operation = this.getNodeParameter('operation', 0) as string;
-		const resource = this.getNodeParameter('resource', 0) as string;
+		const length = items.length;
+		const operation = this.getNodeParameter('operation', 0);
+		const resource = this.getNodeParameter('resource', 0);
 		for (let i = 0; i < length; i++) {
 			try {
 				if (resource === 'contact') {
@@ -600,9 +555,9 @@ export class Egoi implements INodeType {
 
 						const email = this.getNodeParameter('email', i) as string;
 
-						const resolveData = this.getNodeParameter('resolveData', i) as boolean;
+						const resolveData = this.getNodeParameter('resolveData', i);
 
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						const body: ICreateMemberBody = {
 							base: {
@@ -612,11 +567,14 @@ export class Egoi implements INodeType {
 						};
 
 						if (additionalFields.birth_date) {
-							additionalFields.birth_date = moment(additionalFields.birth_date as string).format('YYYY-MM-DD');
+							additionalFields.birth_date = moment(additionalFields.birth_date as string).format(
+								'YYYY-MM-DD',
+							);
 						}
 
 						if (additionalFields.extraFieldsUi) {
-							const extraFields = (additionalFields.extraFieldsUi as IDataObject).extraFieldValues as IDataObject[];
+							const extraFields = (additionalFields.extraFieldsUi as IDataObject)
+								.extraFieldValues as IDataObject[];
 							if (extraFields) {
 								body.extra = extraFields as unknown as [];
 							}
@@ -624,47 +582,62 @@ export class Egoi implements INodeType {
 
 						Object.assign(body.base, additionalFields);
 
-						responseData = await egoiApiRequest.call(this, 'POST', `/lists/${listId}/contacts`, body);
+						responseData = await egoiApiRequest.call(
+							this,
+							'POST',
+							requestPath`/lists/${listId}/contacts`,
+							body,
+						);
 
 						const contactId = responseData.contact_id;
 
 						if (additionalFields.tagIds) {
 							const tags = additionalFields.tagIds as string[];
 							for (const tag of tags) {
-								await egoiApiRequest.call(this, 'POST', `/lists/${listId}/contacts/actions/attach-tag`, { tag_id: tag, contacts: [contactId] });
+								await egoiApiRequest.call(
+									this,
+									'POST',
+									requestPath`/lists/${listId}/contacts/actions/attach-tag`,
+									{ tag_id: tag, contacts: [contactId] },
+								);
 							}
 						}
 
 						if (resolveData) {
-							responseData = await egoiApiRequest.call(this, 'GET', `/lists/${listId}/contacts/${contactId}`);
+							responseData = await egoiApiRequest.call(
+								this,
+								'GET',
+								requestPath`/lists/${listId}/contacts/${contactId}`,
+							);
 						}
 					}
 
 					if (operation === 'get') {
-
 						const listId = this.getNodeParameter('list', i) as string;
 
 						const simple = this.getNodeParameter('simple', i) as boolean;
 
 						const by = this.getNodeParameter('by', 0) as string;
 
-						let endpoint = '';
+						let endpoint: RequestPath;
+						let qs: IDataObject = {};
 
 						if (by === 'id') {
 							const contactId = this.getNodeParameter('contactId', i) as string;
-							endpoint = `/lists/${listId}/contacts/${contactId}`;
+							endpoint = requestPath`/lists/${listId}/contacts/${contactId}`;
 						} else {
 							const email = this.getNodeParameter('email', i) as string;
-							endpoint = `/lists/${listId}/contacts?email=${email}`;
+							endpoint = requestPath`/lists/${listId}/contacts`;
+							qs = { email };
 						}
 
-						responseData = await egoiApiRequest.call(this, 'GET', endpoint, {});
+						responseData = await egoiApiRequest.call(this, 'GET', endpoint, {}, qs);
 
 						if (responseData.items) {
 							responseData = responseData.items;
 						}
 
-						if (simple === true) {
+						if (simple) {
 							const data = (await simplify.call(this, [responseData], listId))[0];
 
 							responseData = {
@@ -679,26 +652,35 @@ export class Egoi implements INodeType {
 					}
 
 					if (operation === 'getAll') {
-
 						const listId = this.getNodeParameter('list', i) as string;
 
-						const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
+						const returnAll = this.getNodeParameter('returnAll', 0);
 
 						const simple = this.getNodeParameter('simple', i) as boolean;
 
 						if (returnAll) {
-
-							responseData = await egoiApiRequestAllItems.call(this, 'items', 'GET', `/lists/${listId}/contacts`, {});
-
+							responseData = await egoiApiRequestAllItems.call(
+								this,
+								'items',
+								'GET',
+								requestPath`/lists/${listId}/contacts`,
+								{},
+							);
 						} else {
-							const limit = this.getNodeParameter('limit', i) as number;
+							const limit = this.getNodeParameter('limit', i);
 
-							responseData = await egoiApiRequest.call(this, 'GET', `/lists/${listId}/contacts`, {}, { limit });
+							responseData = await egoiApiRequest.call(
+								this,
+								'GET',
+								requestPath`/lists/${listId}/contacts`,
+								{},
+								{ limit },
+							);
 
 							responseData = responseData.items;
 						}
 
-						if (simple === true) {
+						if (simple) {
 							responseData = await simplify.call(this, responseData, listId);
 						}
 					}
@@ -706,21 +688,23 @@ export class Egoi implements INodeType {
 					if (operation === 'update') {
 						const listId = this.getNodeParameter('list', i) as string;
 						const contactId = this.getNodeParameter('contactId', i) as string;
-						const resolveData = this.getNodeParameter('resolveData', i) as boolean;
+						const resolveData = this.getNodeParameter('resolveData', i);
 
-						const updateFields = this.getNodeParameter('updateFields', i) as IDataObject;
+						const updateFields = this.getNodeParameter('updateFields', i);
 						const body: ICreateMemberBody = {
-							base: {
-							},
+							base: {},
 							extra: [],
 						};
 
 						if (updateFields.birth_date) {
-							updateFields.birth_date = moment(updateFields.birth_date as string).format('YYYY-MM-DD');
+							updateFields.birth_date = moment(updateFields.birth_date as string).format(
+								'YYYY-MM-DD',
+							);
 						}
 
 						if (updateFields.extraFieldsUi) {
-							const extraFields = (updateFields.extraFieldsUi as IDataObject).extraFieldValues as IDataObject[];
+							const extraFields = (updateFields.extraFieldsUi as IDataObject)
+								.extraFieldValues as IDataObject[];
 							if (extraFields) {
 								body.extra = extraFields as unknown as [];
 							}
@@ -728,40 +712,54 @@ export class Egoi implements INodeType {
 
 						Object.assign(body.base, updateFields);
 
-						responseData = await egoiApiRequest.call(this, 'PATCH', `/lists/${listId}/contacts/${contactId}`, body);
+						responseData = await egoiApiRequest.call(
+							this,
+							'PATCH',
+							requestPath`/lists/${listId}/contacts/${contactId}`,
+							body,
+						);
 
 						if (updateFields.tagIds) {
 							const tags = updateFields.tagIds as string[];
 							for (const tag of tags) {
-								await egoiApiRequest.call(this, 'POST', `/lists/${listId}/contacts/actions/attach-tag`, { tag_id: tag, contacts: [contactId] });
+								await egoiApiRequest.call(
+									this,
+									'POST',
+									requestPath`/lists/${listId}/contacts/actions/attach-tag`,
+									{ tag_id: tag, contacts: [contactId] },
+								);
 							}
 						}
 
 						if (resolveData) {
-							responseData = await egoiApiRequest.call(this, 'GET', `/lists/${listId}/contacts/${contactId}`);
+							responseData = await egoiApiRequest.call(
+								this,
+								'GET',
+								requestPath`/lists/${listId}/contacts/${contactId}`,
+							);
 						}
 					}
 				}
 			} catch (error) {
-				if (this.continueOnFail() !== true) {
+				if (!this.continueOnFail()) {
 					throw error;
 				} else {
 					// Return the actual reason as error
-					returnData.push(
-						{
-							error: error.message,
-						},
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
 					);
+					returnData.push(...executionErrorData);
 					continue;
 				}
 			}
 
-			if (Array.isArray(responseData)) {
-				returnData.push.apply(returnData, responseData as IDataObject[]);
-			} else {
-				returnData.push(responseData as IDataObject);
-			}
+			const executionData = this.helpers.constructExecutionMetaData(
+				this.helpers.returnJsonArray(responseData as IDataObject[]),
+				{ itemData: { item: i } },
+			);
+			returnData.push(...executionData);
 		}
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

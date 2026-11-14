@@ -1,38 +1,35 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
-
-import {
-	OptionsWithUri,
-} from 'request';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 /**
  * Make an authenticated or unauthenticated API request to Reddit.
  */
 export async function redditApiRequest(
 	this: IHookFunctions | IExecuteFunctions,
-	method: string,
-	endpoint: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 	qs: IDataObject,
-): Promise<any> { // tslint:disable-line:no-any
-
+): Promise<any> {
 	const resource = this.getNodeParameter('resource', 0) as string;
 
 	const authRequired = ['profile', 'post', 'postComment'].includes(resource);
 
 	qs.api_type = 'json';
 
-	const options: OptionsWithUri = {
-		headers: {
-			'user-agent': 'n8n',
-		},
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
-		uri: authRequired ? `https://oauth.reddit.com/${endpoint}` : `https://www.reddit.com/${endpoint}`,
+		uri: authRequired
+			? requestUrl`https://oauth.reddit.com/${endpoint}`
+			: requestUrl`https://www.reddit.com/${endpoint}`,
 		qs,
 		json: true,
 	};
@@ -45,15 +42,13 @@ export async function redditApiRequest(
 		try {
 			return await this.helpers.requestOAuth2.call(this, 'redditOAuth2Api', options);
 		} catch (error) {
-			throw new NodeApiError(this.getNode(), error);
+			throw new NodeApiError(this.getNode(), error as JsonObject);
 		}
-
 	} else {
-
 		try {
 			return await this.helpers.request.call(this, options);
 		} catch (error) {
-			throw new NodeApiError(this.getNode(), error);
+			throw new NodeApiError(this.getNode(), error as JsonObject);
 		}
 	}
 }
@@ -63,16 +58,15 @@ export async function redditApiRequest(
  */
 export async function redditApiRequestAllItems(
 	this: IHookFunctions | IExecuteFunctions,
-	method: string,
-	endpoint: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 	qs: IDataObject,
-): Promise<any> { // tslint:disable-line:no-any
-
+): Promise<any> {
 	let responseData;
 	const returnData: IDataObject[] = [];
 
-	const resource = this.getNodeParameter('resource', 0) as string;
-	const operation = this.getNodeParameter('operation', 0) as string;
+	const resource = this.getNodeParameter('resource', 0);
+	const operation = this.getNodeParameter('operation', 0);
 	const returnAll = this.getNodeParameter('returnAll', 0, false) as boolean;
 
 	qs.limit = 100;
@@ -83,18 +77,21 @@ export async function redditApiRequestAllItems(
 			qs.after = responseData.data.after;
 		}
 
-		if (endpoint === 'api/search_subreddits.json') {
-			responseData.subreddits.forEach((child: any) => returnData.push(child)); // tslint:disable-line:no-any
+		if (endpoint.value === 'api/search_subreddits.json') {
+			responseData.subreddits.forEach((child: any) => returnData.push(child as IDataObject));
 		} else if (resource === 'postComment' && operation === 'getAll') {
-			responseData[1].data.children.forEach((child: any) => returnData.push(child.data)); // tslint:disable-line:no-any
+			responseData[1].data.children.forEach((child: any) =>
+				returnData.push(child.data as IDataObject),
+			);
 		} else {
-			responseData.data.children.forEach((child: any) => returnData.push(child.data)); // tslint:disable-line:no-any
+			responseData.data.children.forEach((child: any) =>
+				returnData.push(child.data as IDataObject),
+			);
 		}
-		if (qs.limit && returnData.length >= qs.limit && returnAll === false) {
+		if (qs.limit && returnData.length >= qs.limit && !returnAll) {
 			return returnData;
 		}
-
-	} while (responseData.data && responseData.data.after);
+	} while (responseData.data?.after);
 
 	return returnData;
 }
@@ -105,11 +102,10 @@ export async function redditApiRequestAllItems(
 export async function handleListing(
 	this: IExecuteFunctions,
 	i: number,
-	endpoint: string,
+	endpoint: RequestPath,
 	qs: IDataObject = {},
 	requestMethod: 'GET' | 'POST' = 'GET',
-): Promise<any> { // tslint:disable-line:no-any
-
+): Promise<any> {
 	let responseData;
 
 	const returnAll = this.getNodeParameter('returnAll', i);

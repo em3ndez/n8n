@@ -1,35 +1,32 @@
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError, requestPath } from 'n8n-workflow';
 
-import {
-	apiRequest,
-	apiRequestAllItems,
-	IRecord,
-} from './GenericFunction';
+import type { IRecord } from './GenericFunction';
+import { apiRequest, apiRequestAllItems } from './GenericFunction';
+import { generatePairedItemData } from '../../utils/utilities';
 
 export class Stackby implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Stackby',
 		name: 'stackby',
+		// eslint-disable-next-line n8n-nodes-base/node-class-description-icon-not-svg
 		icon: 'file:stackby.png',
 		group: ['transform'],
 		version: 1,
 		description: 'Read, write, and delete data in Stackby',
 		defaults: {
 			name: 'Stackby',
-			color: '#772244',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'stackbyApi',
@@ -41,6 +38,7 @@ export class Stackby implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Append',
@@ -71,7 +69,7 @@ export class Stackby implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				description: 'The ID of the stack to access.',
+				description: 'The ID of the stack to access',
 			},
 			{
 				displayName: 'Table',
@@ -92,15 +90,12 @@ export class Stackby implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						operation: [
-							'read',
-							'delete',
-						],
+						operation: ['read', 'delete'],
 					},
 				},
 				default: '',
 				required: true,
-				description: 'ID of the record to return.',
+				description: 'ID of the record to return',
 			},
 
 			// ----------------------------------
@@ -112,13 +107,11 @@ export class Stackby implements INodeType {
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						operation: [
-							'list',
-						],
+						operation: ['list'],
 					},
 				},
 				default: true,
-				description: 'If all results should be returned or only up to a given limit.',
+				description: 'Whether to return all results or only up to a given limit',
 			},
 			{
 				displayName: 'Limit',
@@ -126,12 +119,8 @@ export class Stackby implements INodeType {
 				type: 'number',
 				displayOptions: {
 					show: {
-						'operation': [
-							'list',
-						],
-						'returnAll': [
-							false,
-						],
+						operation: ['list'],
+						returnAll: [false],
 					},
 				},
 				typeOptions: {
@@ -139,7 +128,7 @@ export class Stackby implements INodeType {
 					maxValue: 1000,
 				},
 				default: 1000,
-				description: 'Number of results to return.',
+				description: 'Max number of results to return',
 			},
 			{
 				displayName: 'Additional Fields',
@@ -147,9 +136,7 @@ export class Stackby implements INodeType {
 				type: 'collection',
 				displayOptions: {
 					show: {
-						operation: [
-							'list',
-						],
+						operation: ['list'],
 					},
 				},
 				default: {},
@@ -161,7 +148,8 @@ export class Stackby implements INodeType {
 						type: 'string',
 						default: '',
 						placeholder: 'All Stories',
-						description: 'The name or ID of a view in the Stories table. If set, only the records in that view will be returned. The records will be sorted according to the order of the view.',
+						description:
+							'The name or ID of a view in the Stories table. If set, only the records in that view will be returned. The records will be sorted according to the order of the view.',
 					},
 				],
 			},
@@ -174,39 +162,50 @@ export class Stackby implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						operation: [
-							'append',
-						],
+						operation: ['append'],
 					},
 				},
 				default: '',
 				required: true,
 				placeholder: 'id,name,description',
-				description: 'Comma separated list of the properties which should used as columns for the new rows.',
+				description:
+					'Comma-separated list of the properties which should used as columns for the new rows',
 			},
 		],
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const returnData: IDataObject[] = [];
-		const length = items.length as unknown as number;
+		const returnData: INodeExecutionData[] = [];
+		const length = items.length;
 		let responseData;
 		const qs: IDataObject = {};
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const operation = this.getNodeParameter('operation', 0);
 		if (operation === 'read') {
 			for (let i = 0; i < length; i++) {
 				try {
 					const stackId = this.getNodeParameter('stackId', i) as string;
-					const table = encodeURI(this.getNodeParameter('table', i) as string);
+					const table = this.getNodeParameter('table', i) as string;
 					const rowIds = this.getNodeParameter('id', i) as string;
 					qs.rowIds = [rowIds];
-					responseData = await apiRequest.call(this, 'GET', `/rowlist/${stackId}/${table}`, {}, qs);
-					// tslint:disable-next-line: no-any
-					returnData.push.apply(returnData, responseData.map((data: any) => data.field));
+					responseData = await apiRequest.call(
+						this,
+						'GET',
+						requestPath`/rowlist/${stackId}/${table}`,
+						{},
+						qs,
+					);
+					returnData.push.apply(
+						returnData,
+						responseData.map((data: any) => data.field) as INodeExecutionData[],
+					);
 				} catch (error) {
 					if (this.continueOnFail()) {
-						returnData.push({ error: error.message });
+						const executionErrorData = this.helpers.constructExecutionMetaData(
+							this.helpers.returnJsonArray({ error: error.message }),
+							{ itemData: { item: i } },
+						);
+						returnData.push(...executionErrorData);
 						continue;
 					}
 					throw error;
@@ -217,16 +216,32 @@ export class Stackby implements INodeType {
 			for (let i = 0; i < length; i++) {
 				try {
 					const stackId = this.getNodeParameter('stackId', i) as string;
-					const table = encodeURI(this.getNodeParameter('table', i) as string);
+					const table = this.getNodeParameter('table', i) as string;
 					const rowIds = this.getNodeParameter('id', i) as string;
 					qs.rowIds = [rowIds];
 
-					responseData = await apiRequest.call(this, 'DELETE', `/rowdelete/${stackId}/${table}`, {}, qs);
+					responseData = await apiRequest.call(
+						this,
+						'DELETE',
+						requestPath`/rowdelete/${stackId}/${table}`,
+						{},
+						qs,
+					);
 					responseData = responseData.records;
-					returnData.push.apply(returnData, responseData);
+
+					const executionData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray(responseData as IDataObject),
+						{ itemData: { item: i } },
+					);
+
+					returnData.push(...executionData);
 				} catch (error) {
 					if (this.continueOnFail()) {
-						returnData.push({ error: error.message });
+						const executionErrorData = this.helpers.constructExecutionMetaData(
+							this.helpers.returnJsonArray({ error: error.message }),
+							{ itemData: { item: i } },
+						);
+						returnData.push(...executionErrorData);
 						continue;
 					}
 					throw error;
@@ -236,40 +251,53 @@ export class Stackby implements INodeType {
 
 		if (operation === 'append') {
 			try {
-				const records: { [key: string]: IRecord[] } = {};
+				const records: { [key: string]: { path: RequestPath; records: IRecord[] } } = {};
 				let key = '';
 				for (let i = 0; i < length; i++) {
 					const stackId = this.getNodeParameter('stackId', i) as string;
-					const table = encodeURI(this.getNodeParameter('table', i) as string);
+					const table = this.getNodeParameter('table', i) as string;
 					const columns = this.getNodeParameter('columns', i) as string;
-					const columnList = columns.split(',').map(column => column.trim());
+					const columnList = columns.split(',').map((column) => column.trim());
 
-					// tslint:disable-next-line: no-any
 					const record: { [key: string]: any } = {};
 					for (const column of columnList) {
 						if (items[i].json[column] === undefined) {
-							throw new NodeOperationError(this.getNode(), `Column ${column} does not exist on input`);
+							throw new NodeOperationError(
+								this.getNode(),
+								`Column ${column} does not exist on input`,
+								{ itemIndex: i },
+							);
 						} else {
 							record[column] = items[i].json[column];
 						}
 					}
-					key = `${stackId}/${table}`;
+					const path = requestPath`/rowcreate/${stackId}/${table}`;
+					key = path.value;
 
 					if (records[key] === undefined) {
-						records[key] = [];
+						records[key] = { path, records: [] };
 					}
-					records[key].push({ field: record });
+					records[key].records.push({ field: record });
 				}
 
-				for (const key of Object.keys(records)) {
-					responseData = await apiRequest.call(this, 'POST', `/rowcreate/${key}`, { records: records[key] });
+				for (const recordKey of Object.keys(records)) {
+					responseData = await apiRequest.call(this, 'POST', records[recordKey].path, {
+						records: records[recordKey].records,
+					});
 				}
 
-				// tslint:disable-next-line: no-any
-				returnData.push.apply(returnData, responseData.map((data: any) => data.field));
+				returnData.push.apply(
+					returnData,
+					responseData.map((data: any) => data.field) as INodeExecutionData[],
+				);
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const itemData = generatePairedItemData(items.length);
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData },
+					);
+					returnData.push(...executionErrorData);
 				} else {
 					throw error;
 				}
@@ -280,33 +308,51 @@ export class Stackby implements INodeType {
 			for (let i = 0; i < length; i++) {
 				try {
 					const stackId = this.getNodeParameter('stackId', i) as string;
-					const table = encodeURI(this.getNodeParameter('table', i) as string);
-					const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
+					const table = this.getNodeParameter('table', i) as string;
+					const returnAll = this.getNodeParameter('returnAll', 0);
 
-					const additionalFields = this.getNodeParameter('additionalFields', i, {}) as IDataObject;
+					const additionalFields = this.getNodeParameter('additionalFields', i, {});
 
 					if (additionalFields.view) {
 						qs.view = additionalFields.view;
 					}
 
-					if (returnAll === true) {
-						responseData = await apiRequestAllItems.call(this, 'GET', `/rowlist/${stackId}/${table}`, {}, qs);
+					if (returnAll) {
+						responseData = await apiRequestAllItems.call(
+							this,
+							'GET',
+							requestPath`/rowlist/${stackId}/${table}`,
+							{},
+							qs,
+						);
 					} else {
-						qs.maxrecord = this.getNodeParameter('limit', 0) as number;
-						responseData = await apiRequest.call(this, 'GET', `/rowlist/${stackId}/${table}`, {}, qs);
+						qs.maxrecord = this.getNodeParameter('limit', 0);
+						responseData = await apiRequest.call(
+							this,
+							'GET',
+							requestPath`/rowlist/${stackId}/${table}`,
+							{},
+							qs,
+						);
 					}
 
-					// tslint:disable-next-line: no-any
-					returnData.push.apply(returnData, responseData.map((data: any) => data.field));
+					returnData.push.apply(
+						returnData,
+						responseData.map((data: any) => data.field) as INodeExecutionData[],
+					);
 				} catch (error) {
 					if (this.continueOnFail()) {
-						returnData.push({ error: error.message });
+						const executionErrorData = this.helpers.constructExecutionMetaData(
+							this.helpers.returnJsonArray({ error: error.message }),
+							{ itemData: { item: i } },
+						);
+						returnData.push(...executionErrorData);
 						continue;
 					}
 					throw error;
 				}
 			}
 		}
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

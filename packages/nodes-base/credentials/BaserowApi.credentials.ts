@@ -1,14 +1,30 @@
 import {
-	ICredentialType,
-	INodeProperties,
+	requestUrl,
+	type IAuthenticateGeneric,
+	type ICredentialDataDecryptedObject,
+	type ICredentialTestRequest,
+	type ICredentialType,
+	type IHttpRequestHelper,
+	type INodeProperties,
 } from 'n8n-workflow';
 
 // https://api.baserow.io/api/redoc/#section/Authentication
 
 export class BaserowApi implements ICredentialType {
 	name = 'baserowApi';
+
 	displayName = 'Baserow API';
+
+	documentationUrl = 'baserow';
+
 	properties: INodeProperties[] = [
+		{
+			displayName:
+				"This type of connection (Username & Password) is deprecated. Please create a new credential of type 'Baserow Token API' instead.",
+			name: 'deprecated',
+			type: 'notice',
+			default: '',
+		},
 		{
 			displayName: 'Host',
 			name: 'host',
@@ -16,10 +32,20 @@ export class BaserowApi implements ICredentialType {
 			default: 'https://api.baserow.io',
 		},
 		{
+			displayName: 'Session Token',
+			name: 'jwtToken',
+			type: 'hidden',
+			typeOptions: {
+				expirable: true,
+			},
+			default: '',
+		},
+		{
 			displayName: 'Username',
 			name: 'username',
 			type: 'string',
 			default: '',
+			description: 'Email address you use to login to Baserow',
 		},
 		{
 			displayName: 'Password',
@@ -31,4 +57,32 @@ export class BaserowApi implements ICredentialType {
 			},
 		},
 	];
+
+	async preAuthentication(this: IHttpRequestHelper, credentials: ICredentialDataDecryptedObject) {
+		const { token } = (await this.helpers.httpRequest({
+			method: 'POST',
+			url: requestUrl`${credentials.host}/api/user/token-auth/`,
+			body: {
+				username: credentials.username,
+				password: credentials.password,
+			},
+		})) as { token: string };
+		return { jwtToken: token };
+	}
+
+	authenticate: IAuthenticateGeneric = {
+		type: 'generic',
+		properties: {
+			headers: {
+				Authorization: '=JWT {{$credentials.jwtToken}}',
+			},
+		},
+	};
+
+	test: ICredentialTestRequest = {
+		request: {
+			baseURL: '={{$credentials.host}}',
+			url: '/api/applications/',
+		},
+	};
 }

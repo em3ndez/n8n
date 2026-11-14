@@ -1,22 +1,15 @@
-import {
+import { snakeCase } from 'change-case';
+import type {
 	IHookFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookResponseData,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	autopilotApiRequest,
-} from './GenericFunctions';
-
-import {
-	snakeCase,
-} from 'change-case';
+import { autopilotApiRequest } from './GenericFunctions';
 
 export class AutopilotTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -29,10 +22,9 @@ export class AutopilotTrigger implements INodeType {
 		description: 'Handle Autopilot events via webhooks',
 		defaults: {
 			name: 'Autopilot Trigger',
-			color: '#6ad7b9',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'autopilotApi',
@@ -88,14 +80,17 @@ export class AutopilotTrigger implements INodeType {
 		],
 	};
 
-	// @ts-ignore
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				const webhookUrl = this.getNodeWebhookUrl('default');
 				const event = this.getNodeParameter('event') as string;
-				const { hooks: webhooks } = await autopilotApiRequest.call(this, 'GET', '/hooks');
+				const { hooks: webhooks } = await autopilotApiRequest.call(
+					this,
+					'GET',
+					requestPath`/hooks`,
+				);
 				for (const webhook of webhooks) {
 					if (webhook.target_url === webhookUrl && webhook.event === snakeCase(event)) {
 						webhookData.webhookId = webhook.hook_id;
@@ -112,14 +107,18 @@ export class AutopilotTrigger implements INodeType {
 					event: snakeCase(event),
 					target_url: webhookUrl,
 				};
-				const webhook = await autopilotApiRequest.call(this, 'POST', '/hook', body);
+				const webhook = await autopilotApiRequest.call(this, 'POST', requestPath`/hook`, body);
 				webhookData.webhookId = webhook.hook_id;
 				return true;
 			},
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				try {
-					await autopilotApiRequest.call(this, 'DELETE', `/hook/${webhookData.webhookId}`);
+					await autopilotApiRequest.call(
+						this,
+						'DELETE',
+						requestPath`/hook/${webhookData.webhookId}`,
+					);
 				} catch (error) {
 					return false;
 				}
@@ -132,9 +131,7 @@ export class AutopilotTrigger implements INodeType {
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 		const req = this.getRequestObject();
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(req.body),
-			],
+			workflowData: [this.helpers.returnJsonArray(req.body as IDataObject[])],
 		};
 	}
 }

@@ -1,38 +1,38 @@
-
-import {
-	OptionsWithUrl,
-} from 'request';
-
-import {
+import { createHmac } from 'crypto';
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	JsonObject,
+	IRequestOptions,
+	IHttpRequestMethods,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestPath, requestUrl } from 'n8n-workflow';
+import qs from 'qs';
 
-import {
-	createHmac,
-} from 'crypto';
+export async function unleashedApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	path: RequestPath,
+	body: IDataObject = {},
+	query: IDataObject = {},
+	pageNumber?: number,
+	headers?: object,
+) {
+	const paginatedPath = pageNumber ? requestPath`/${path}/${pageNumber}` : requestPath`/${path}`;
 
-import * as qs from 'qs';
-
-export async function unleashedApiRequest(this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions, method: string, path: string, body: any = {}, query: IDataObject = {}, pageNumber?: number, headers?: object): Promise<any> { // tslint:disable-line:no-any
-
-	const paginatedPath = pageNumber ? `/${path}/${pageNumber}` : `/${path}`;
-
-	const options: OptionsWithUrl = {
+	const options: WithRequestTarget<IRequestOptions> = {
 		headers: {
-			'Accept': 'application/json',
+			Accept: 'application/json',
 			'Content-Type': 'application/json',
 		},
 		method,
 		qs: query,
 		body,
-		url: `https://api.unleashedsoftware.com/${paginatedPath}`,
+		url: requestUrl`https://api.unleashedsoftware.com/${paginatedPath}`,
 		json: true,
 	};
 
@@ -42,11 +42,7 @@ export async function unleashedApiRequest(this: IHookFunctions | IExecuteFunctio
 
 	const credentials = await this.getCredentials('unleashedSoftwareApi');
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
-
-	const signature = createHmac('sha256', (credentials.apiKey as string))
+	const signature = createHmac('sha256', credentials.apiKey as string)
 		.update(qs.stringify(query))
 		.digest('base64');
 
@@ -56,14 +52,20 @@ export async function unleashedApiRequest(this: IHookFunctions | IExecuteFunctio
 	});
 
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function unleashedApiRequestAllItems(this: IExecuteFunctions | ILoadOptionsFunctions, propertyName: string, method: string, endpoint: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-
+export async function unleashedApiRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: IDataObject = {},
+	query: IDataObject = {},
+) {
 	const returnData: IDataObject[] = [];
 	let responseData;
 	let pageNumber = 1;
@@ -72,11 +74,11 @@ export async function unleashedApiRequestAllItems(this: IExecuteFunctions | ILoa
 
 	do {
 		responseData = await unleashedApiRequest.call(this, method, endpoint, body, query, pageNumber);
-		returnData.push.apply(returnData, responseData[propertyName]);
+		returnData.push.apply(returnData, responseData[propertyName] as IDataObject[]);
 		pageNumber++;
-
 	} while (
-		(responseData.Pagination.PageNumber as number) < (responseData.Pagination.NumberOfPages as number)
+		(responseData.Pagination.PageNumber as number) <
+		(responseData.Pagination.NumberOfPages as number)
 	);
 	return returnData;
 }
@@ -84,17 +86,21 @@ export async function unleashedApiRequestAllItems(this: IExecuteFunctions | ILoa
 //.NET code is serializing dates in the following format: "/Date(1586833770780)/"
 //which is useless on JS side and could not treated as a date for other nodes
 //so we need to convert all of the fields that has it.
-export function convertNETDates(item: { [key: string]: any }) { // tslint:disable-line:no-any
-	Object.keys(item).forEach(path => {
+
+export function convertNETDates(item: { [key: string]: any }, serializeDates = false) {
+	Object.keys(item).forEach((path) => {
 		const type = typeof item[path] as string;
 		if (type === 'string') {
 			const value = item[path] as string;
 			const a = /\/Date\((\d*)\)\//.exec(value);
 			if (a) {
-				item[path] = new Date(+a[1]);
+				const date = new Date(+a[1]);
+				// v1.1+ returns ISO strings so node output stays JSON-safe
+				item[path] = serializeDates ? date.toISOString() : date;
 			}
-		} if (type === 'object' && item[path]) {
-			convertNETDates(item[path]);
+		}
+		if (type === 'object' && item[path]) {
+			convertNETDates(item[path] as IDataObject, serializeDates);
 		}
 	});
 }

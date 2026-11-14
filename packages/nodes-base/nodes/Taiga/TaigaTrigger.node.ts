@@ -1,26 +1,19 @@
 import {
-	ICredentialDataDecryptedObject,
-	IDataObject,
-	ILoadOptionsFunctions,
-	INodePropertyOptions,
-	INodeType,
-	INodeTypeDescription,
-	IWebhookFunctions,
-	IWebhookResponseData,
+	type IHookFunctions,
+	type IDataObject,
+	type ILoadOptionsFunctions,
+	type INodePropertyOptions,
+	type INodeType,
+	type INodeTypeDescription,
+	type IWebhookFunctions,
+	type IWebhookResponseData,
+	NodeConnectionTypes,
+	requestPath,
 } from 'n8n-workflow';
 
-import {
-	IHookFunctions,
-} from 'n8n-core';
-
-import {
-	getAutomaticSecret,
-	taigaApiRequest,
-} from './GenericFunctions';
-
-// import {
-// 	createHmac,
-// } from 'crypto';
+import { getAutomaticSecret, taigaApiRequest } from './GenericFunctions';
+import { verifySignature } from './TaigaTriggerHelpers';
+import type { Operations, Resources, WebhookPayload } from './types';
 
 export class TaigaTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -33,10 +26,9 @@ export class TaigaTrigger implements INodeType {
 		description: 'Handle Taiga events via webhook',
 		defaults: {
 			name: 'Taiga Trigger',
-			color: '#772244',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'taigaApi',
@@ -53,14 +45,15 @@ export class TaigaTrigger implements INodeType {
 		],
 		properties: [
 			{
-				displayName: 'Project ID',
+				displayName: 'Project Name or ID',
 				name: 'projectId',
 				type: 'options',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'getUserProjects',
 				},
 				default: '',
-				description: 'Project ID',
 				required: true,
 			},
 			{
@@ -68,9 +61,7 @@ export class TaigaTrigger implements INodeType {
 				name: 'resources',
 				type: 'multiOptions',
 				required: true,
-				default: [
-					'all',
-				],
+				default: ['all'],
 				options: [
 					{
 						name: 'All',
@@ -104,9 +95,7 @@ export class TaigaTrigger implements INodeType {
 				name: 'operations',
 				type: 'multiOptions',
 				required: true,
-				default: [
-					'all',
-				],
+				default: ['all'],
 				description: 'Operations to listen to',
 				options: [
 					{
@@ -132,14 +121,20 @@ export class TaigaTrigger implements INodeType {
 
 	methods = {
 		loadOptions: {
-			// Get all the available projects to display them to user so that he can
+			// Get all the available projects to display them to user so that they can
 			// select them easily
 			async getUserProjects(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
 
-				const { id } = await taigaApiRequest.call(this, 'GET', '/users/me');
+				const { id } = await taigaApiRequest.call(this, 'GET', requestPath`/users/me`);
 
-				const projects = await taigaApiRequest.call(this, 'GET', '/projects', {}, { member: id });
+				const projects = await taigaApiRequest.call(
+					this,
+					'GET',
+					requestPath`/projects`,
+					{},
+					{ member: id },
+				);
 				for (const project of projects) {
 					const projectName = project.name;
 					const projectId = project.id;
@@ -153,7 +148,6 @@ export class TaigaTrigger implements INodeType {
 		},
 	};
 
-	// @ts-ignore
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -161,7 +155,7 @@ export class TaigaTrigger implements INodeType {
 
 				const webhookData = this.getWorkflowStaticData('node');
 
-				const endpoint = `/webhooks`;
+				const endpoint = requestPath`/webhooks`;
 
 				const webhooks = await taigaApiRequest.call(this, 'GET', endpoint);
 
@@ -176,7 +170,7 @@ export class TaigaTrigger implements INodeType {
 				return false;
 			},
 			async create(this: IHookFunctions): Promise<boolean> {
-				const credentials = await this.getCredentials('taigaApi') as ICredentialDataDecryptedObject;
+				const credentials = await this.getCredentials('taigaApi');
 
 				const webhookUrl = this.getNodeWebhookUrl('default') as string;
 
@@ -192,7 +186,7 @@ export class TaigaTrigger implements INodeType {
 					key,
 					project: projectId,
 				};
-				const { id } = await taigaApiRequest.call(this, 'POST', '/webhooks', body);
+				const { id } = await taigaApiRequest.call(this, 'POST', requestPath`/webhooks`, body);
 
 				webhookData.webhookId = id;
 				webhookData.key = key;
@@ -202,7 +196,11 @@ export class TaigaTrigger implements INodeType {
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				try {
-					await taigaApiRequest.call(this, 'DELETE', `/webhooks/${webhookData.webhookId}`);
+					await taigaApiRequest.call(
+						this,
+						'DELETE',
+						requestPath`/webhooks/${webhookData.webhookId}`,
+					);
 				} catch (error) {
 					return false;
 				}
@@ -214,6 +212,12 @@ export class TaigaTrigger implements INodeType {
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		if (!verifySignature.call(this)) {
+			const res = this.getResponseObject();
+			res.status(401).send('Unauthorized').end();
+			return { noWebhookResponse: true };
+		}
+
 		const body = this.getRequestObject().body as WebhookPayload;
 
 		const operations = this.getNodeParameter('operations', []) as Operations[];
@@ -227,29 +231,8 @@ export class TaigaTrigger implements INodeType {
 			return {};
 		}
 
-		// TODO: Signature does not match payload hash
-		// https://github.com/taigaio/taiga-back/issues/1031
-
-		// const webhookData = this.getWorkflowStaticData('node');
-		// const headerData = this.getHeaderData();
-
-		// // @ts-ignore
-		// const requestSignature = headerData['x-taiga-webhook-signature'];
-
-		// if (requestSignature === undefined) {
-		// 	return {};
-		// }
-
-		// const computedSignature = createHmac('sha1', webhookData.key as string).update(JSON.stringify(body)).digest('hex');
-
-		// if (requestSignature !== computedSignature) {
-		// 	return {};
-		// }
-
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(body),
-			],
+			workflowData: [this.helpers.returnJsonArray(body)],
 		};
 	}
 }

@@ -1,44 +1,20 @@
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeApiError,
+	JsonObject,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	handleListing,
-	redditApiRequest,
-} from './GenericFunctions';
-
-import {
-	postCommentFields,
-	postCommentOperations,
-} from './PostCommentDescription';
-
-import {
-	postFields,
-	postOperations,
-} from './PostDescription';
-
-import {
-	profileFields,
-	profileOperations,
-} from './ProfileDescription';
-
-import {
-	subredditFields,
-	subredditOperations,
-} from './SubredditDescription';
-
-import {
-	userFields,
-	userOperations,
-} from './UserDescription';
+import { handleListing, redditApiRequest } from './GenericFunctions';
+import { postCommentFields, postCommentOperations } from './PostCommentDescription';
+import { postFields, postOperations } from './PostDescription';
+import { profileFields, profileOperations } from './ProfileDescription';
+import { subredditFields, subredditOperations } from './SubredditDescription';
+import { userFields, userOperations } from './UserDescription';
 
 export class Reddit implements INodeType {
 	description: INodeTypeDescription = {
@@ -51,21 +27,17 @@ export class Reddit implements INodeType {
 		description: 'Consume the Reddit API',
 		defaults: {
 			name: 'Reddit',
-			color: '#ff5700',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'redditOAuth2Api',
 				required: true,
 				displayOptions: {
 					show: {
-						resource: [
-							'postComment',
-							'post',
-							'profile',
-						],
+						resource: ['postComment', 'post', 'profile'],
 					},
 				},
 			},
@@ -75,6 +47,7 @@ export class Reddit implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Post',
@@ -98,7 +71,6 @@ export class Reddit implements INodeType {
 					},
 				],
 				default: 'post',
-				description: 'Resource to consume',
 			},
 			...postCommentOperations,
 			...postCommentFields,
@@ -116,11 +88,11 @@ export class Reddit implements INodeType {
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
 
 		let responseData;
-		const returnData: IDataObject[] = [];
+		const returnData: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
 			try {
@@ -129,9 +101,7 @@ export class Reddit implements INodeType {
 				// *********************************************************************
 
 				if (resource === 'post') {
-
 					if (operation === 'create') {
-
 						// ----------------------------------
 						//         post: create
 						// ----------------------------------
@@ -145,19 +115,17 @@ export class Reddit implements INodeType {
 						};
 
 						qs.kind === 'self'
-							? qs.text = this.getNodeParameter('text', i)
-							: qs.url = this.getNodeParameter('url', i);
+							? (qs.text = this.getNodeParameter('text', i))
+							: (qs.url = this.getNodeParameter('url', i));
 
 						if (qs.url) {
 							qs.resubmit = this.getNodeParameter('resubmit', i);
 						}
 
-						responseData = await redditApiRequest.call(this, 'POST', 'api/submit', qs);
+						responseData = await redditApiRequest.call(this, 'POST', requestPath`api/submit`, qs);
 
 						responseData = responseData.json.data;
-
 					} else if (operation === 'delete') {
-
 						// ----------------------------------
 						//         post: delete
 						// ----------------------------------
@@ -167,28 +135,24 @@ export class Reddit implements INodeType {
 						const postTypePrefix = 't3_';
 
 						const qs: IDataObject = {
-							id: postTypePrefix + this.getNodeParameter('postId', i),
+							id: postTypePrefix + (this.getNodeParameter('postId', i) as string),
 						};
 
-						await redditApiRequest.call(this, 'POST', 'api/del', qs);
+						await redditApiRequest.call(this, 'POST', requestPath`api/del`, qs);
 
 						responseData = { success: true };
-
 					} else if (operation === 'get') {
-
 						// ----------------------------------
 						//         post: get
 						// ----------------------------------
 
 						const subreddit = this.getNodeParameter('subreddit', i);
 						const postId = this.getNodeParameter('postId', i) as string;
-						const endpoint = `r/${subreddit}/comments/${postId}.json`;
+						const endpoint = requestPath`r/${subreddit}/comments/${postId}.json`;
 
 						responseData = await redditApiRequest.call(this, 'GET', endpoint, {});
 						responseData = responseData[0].data.children[0].data;
-
 					} else if (operation === 'getAll') {
-
 						// ----------------------------------
 						//         post: getAll
 						// ----------------------------------
@@ -199,17 +163,15 @@ export class Reddit implements INodeType {
 						// https://www.reddit.com/dev/api/#GET_{sort}
 
 						const subreddit = this.getNodeParameter('subreddit', i);
-						let endpoint = `r/${subreddit}.json`;
+						let endpoint = requestPath`r/${subreddit}.json`;
 
 						const { category } = this.getNodeParameter('filters', i) as { category: string };
 						if (category) {
-							endpoint = `r/${subreddit}/${category}.json`;
+							endpoint = requestPath`r/${subreddit}/${category}.json`;
 						}
 
 						responseData = await handleListing.call(this, i, endpoint);
-
 					} else if (operation === 'search') {
-
 						// ----------------------------------
 						//         post: search
 						// ----------------------------------
@@ -223,40 +185,36 @@ export class Reddit implements INodeType {
 							restrict_sr: location === 'subreddit',
 						} as IDataObject;
 
-						const { sort } = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const { sort } = this.getNodeParameter('additionalFields', i);
 
 						if (sort) {
 							qs.sort = sort;
 						}
 
-						let endpoint = '';
+						let endpoint: RequestPath;
 
 						if (location === 'allReddit') {
-							endpoint = 'search.json';
+							endpoint = requestPath`search.json`;
 						} else {
 							const subreddit = this.getNodeParameter('subreddit', i);
-							endpoint = `r/${subreddit}/search.json`;
+							endpoint = requestPath`r/${subreddit}/search.json`;
 						}
 
 						responseData = await handleListing.call(this, i, endpoint, qs);
 
-						const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
+						const returnAll = this.getNodeParameter('returnAll', 0);
 
 						if (!returnAll) {
-							const limit = this.getNodeParameter('limit', 0) as number;
+							const limit = this.getNodeParameter('limit', 0);
 							responseData = responseData.splice(0, limit);
 						}
-
 					}
-
 				} else if (resource === 'postComment') {
-
 					// *********************************************************************
 					//        postComment
 					// *********************************************************************
 
 					if (operation === 'create') {
-
 						// ----------------------------------
 						//        postComment: create
 						// ----------------------------------
@@ -267,14 +225,12 @@ export class Reddit implements INodeType {
 
 						const qs: IDataObject = {
 							text: this.getNodeParameter('commentText', i),
-							thing_id: postTypePrefix + this.getNodeParameter('postId', i),
+							thing_id: postTypePrefix + (this.getNodeParameter('postId', i) as string),
 						};
 
-						responseData = await redditApiRequest.call(this, 'POST', 'api/comment', qs);
+						responseData = await redditApiRequest.call(this, 'POST', requestPath`api/comment`, qs);
 						responseData = responseData.json.data.things[0].data;
-
 					} else if (operation === 'getAll') {
-
 						// ----------------------------------
 						//        postComment: getAll
 						// ----------------------------------
@@ -283,12 +239,10 @@ export class Reddit implements INodeType {
 
 						const subreddit = this.getNodeParameter('subreddit', i);
 						const postId = this.getNodeParameter('postId', i) as string;
-						const endpoint = `r/${subreddit}/comments/${postId}.json`;
+						const endpoint = requestPath`r/${subreddit}/comments/${postId}.json`;
 
 						responseData = await handleListing.call(this, i, endpoint);
-
 					} else if (operation === 'delete') {
-
 						// ----------------------------------
 						//        postComment: delete
 						// ----------------------------------
@@ -298,15 +252,13 @@ export class Reddit implements INodeType {
 						const commentTypePrefix = 't1_';
 
 						const qs: IDataObject = {
-							id: commentTypePrefix + this.getNodeParameter('commentId', i),
+							id: commentTypePrefix + (this.getNodeParameter('commentId', i) as string),
 						};
 
-						await redditApiRequest.call(this, 'POST', 'api/del', qs);
+						await redditApiRequest.call(this, 'POST', requestPath`api/del`, qs);
 
 						responseData = { success: true };
-
 					} else if (operation === 'reply') {
-
 						// ----------------------------------
 						//        postComment: reply
 						// ----------------------------------
@@ -317,21 +269,18 @@ export class Reddit implements INodeType {
 
 						const qs: IDataObject = {
 							text: this.getNodeParameter('replyText', i),
-							thing_id: commentTypePrefix + this.getNodeParameter('commentId', i),
+							thing_id: commentTypePrefix + (this.getNodeParameter('commentId', i) as string),
 						};
 
-						responseData = await redditApiRequest.call(this, 'POST', 'api/comment', qs);
+						responseData = await redditApiRequest.call(this, 'POST', requestPath`api/comment`, qs);
 						responseData = responseData.json.data.things[0].data;
 					}
-
 				} else if (resource === 'profile') {
-
 					// *********************************************************************
 					//         profile
 					// *********************************************************************
 
 					if (operation === 'get') {
-
 						// ----------------------------------
 						//         profile: get
 						// ----------------------------------
@@ -342,44 +291,54 @@ export class Reddit implements INodeType {
 						// https://www.reddit.com/dev/api/#GET_api_v1_me_trophies
 						// https://www.reddit.com/dev/api/#GET_prefs_{where}
 
-						const endpoints: { [key: string]: string } = {
-							identity: 'me',
-							blockedUsers: 'me/blocked',
-							friends: 'me/friends',
-							karma: 'me/karma',
-							prefs: 'me/prefs',
-							trophies: 'me/trophies',
+						const endpoints: { [key: string]: RequestPath } = {
+							identity: requestPath`api/v1/me`,
+							blockedUsers: requestPath`api/v1/me/blocked`,
+							friends: requestPath`api/v1/me/friends`,
+							karma: requestPath`api/v1/me/karma`,
+							prefs: requestPath`api/v1/me/prefs`,
+							trophies: requestPath`api/v1/me/trophies`,
 						};
 
 						const details = this.getNodeParameter('details', i) as string;
-						const endpoint = `api/v1/${endpoints[details]}`;
-						responseData = await redditApiRequest.call(this, 'GET', endpoint, {});
+						let username;
+
+						if (details === 'saved') {
+							({ name: username } = await redditApiRequest.call(
+								this,
+								'GET',
+								requestPath`api/v1/me`,
+								{},
+							));
+						}
+
+						responseData =
+							details === 'saved'
+								? await handleListing.call(this, i, requestPath`user/${username}/saved.json`)
+								: await redditApiRequest.call(this, 'GET', endpoints[details], {});
 
 						if (details === 'identity') {
 							responseData = responseData.features;
 						} else if (details === 'friends') {
 							responseData = responseData.data.children;
 							if (!responseData.length) {
-								throw new NodeApiError(this.getNode(), responseData);
+								throw new NodeApiError(this.getNode(), responseData as JsonObject);
 							}
 						} else if (details === 'karma') {
 							responseData = responseData.data;
 							if (!responseData.length) {
-								throw new NodeApiError(this.getNode(), responseData);
+								throw new NodeApiError(this.getNode(), responseData as JsonObject);
 							}
 						} else if (details === 'trophies') {
 							responseData = responseData.data.trophies.map((trophy: IDataObject) => trophy.data);
 						}
 					}
-
 				} else if (resource === 'subreddit') {
-
 					// *********************************************************************
 					//        subreddit
 					// *********************************************************************
 
 					if (operation === 'get') {
-
 						// ----------------------------------
 						//        subreddit: get
 						// ----------------------------------
@@ -389,7 +348,7 @@ export class Reddit implements INodeType {
 
 						const subreddit = this.getNodeParameter('subreddit', i);
 						const content = this.getNodeParameter('content', i) as string;
-						const endpoint = `r/${subreddit}/about/${content}.json`;
+						const endpoint = requestPath`r/${subreddit}/about/${content}.json`;
 
 						responseData = await redditApiRequest.call(this, 'GET', endpoint, {});
 
@@ -398,9 +357,7 @@ export class Reddit implements INodeType {
 						} else if (content === 'about') {
 							responseData = responseData.data;
 						}
-
 					} else if (operation === 'getAll') {
-
 						// ----------------------------------
 						//        subreddit: getAll
 						// ----------------------------------
@@ -409,45 +366,41 @@ export class Reddit implements INodeType {
 						// https://www.reddit.com/dev/api/#POST_api_search_subreddits
 						// https://www.reddit.com/r/subreddits.json
 
-						const filters = this.getNodeParameter('filters', i) as IDataObject;
+						const filters = this.getNodeParameter('filters', i);
 
 						if (filters.trending) {
-							const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
-							const endpoint = 'api/trending_subreddits.json';
+							const returnAll = this.getNodeParameter('returnAll', 0);
+							const endpoint = requestPath`api/trending_subreddits.json`;
 							responseData = await redditApiRequest.call(this, 'GET', endpoint, {});
 							responseData = responseData.subreddit_names.map((name: string) => ({ name }));
-							if (returnAll === false) {
-								const limit = this.getNodeParameter('limit', 0) as number;
+							if (!returnAll) {
+								const limit = this.getNodeParameter('limit', 0);
 								responseData = responseData.splice(0, limit);
 							}
-
 						} else if (filters.keyword) {
 							const qs: IDataObject = {};
 							qs.query = filters.keyword;
 
-							const endpoint = 'api/search_subreddits.json';
+							const endpoint = requestPath`api/search_subreddits.json`;
 							responseData = await redditApiRequest.call(this, 'POST', endpoint, qs);
 
-							const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
+							const returnAll = this.getNodeParameter('returnAll', 0);
 
-							if (returnAll === false) {
-								const limit = this.getNodeParameter('limit', 0) as number;
+							if (!returnAll) {
+								const limit = this.getNodeParameter('limit', 0);
 								responseData = responseData.subreddits.splice(0, limit);
 							}
 						} else {
-							const endpoint = 'r/subreddits.json';
+							const endpoint = requestPath`r/subreddits.json`;
 							responseData = await handleListing.call(this, i, endpoint);
 						}
 					}
-
 				} else if (resource === 'user') {
-
 					// *********************************************************************
 					//           user
 					// *********************************************************************
 
 					if (operation === 'get') {
-
 						// ----------------------------------
 						//           user: get
 						// ----------------------------------
@@ -456,11 +409,12 @@ export class Reddit implements INodeType {
 
 						const username = this.getNodeParameter('username', i) as string;
 						const details = this.getNodeParameter('details', i) as string;
-						const endpoint = `user/${username}/${details}.json`;
+						const endpoint = requestPath`user/${username}/${details}.json`;
 
-						responseData = details === 'about'
-							? await redditApiRequest.call(this, 'GET', endpoint, {})
-							: await handleListing.call(this, i, endpoint);
+						responseData =
+							details === 'about'
+								? await redditApiRequest.call(this, 'GET', endpoint, {})
+								: await handleListing.call(this, i, endpoint);
 
 						if (details === 'about') {
 							responseData = responseData.data;
@@ -468,18 +422,25 @@ export class Reddit implements INodeType {
 					}
 				}
 
-				Array.isArray(responseData)
-					? returnData.push(...responseData)
-					: returnData.push(responseData);
+				const executionData = this.helpers.constructExecutionMetaData(
+					this.helpers.returnJsonArray(responseData as JsonObject),
+					{ itemData: { item: i } },
+				);
+
+				returnData.push(...executionData);
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionErrorData);
 					continue;
 				}
 				throw error;
 			}
 		}
 
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

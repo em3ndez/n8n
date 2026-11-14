@@ -1,49 +1,63 @@
-import { OptionsWithUri } from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
 	IHookFunctions,
 	IWebhookFunctions,
-	NodeApiError,
-	NodeOperationError,
+	IHttpRequestMethods,
+	LegacyRequestOptions,
+	RequestPath,
 } from 'n8n-workflow';
+import { requestPath, requestUrl } from 'n8n-workflow';
 
-export async function calendlyApiRequest(this: IExecuteFunctions | IWebhookFunctions | IHookFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, query: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export function getCredentialsType(
+	this: IExecuteFunctions | IWebhookFunctions | IHookFunctions | ILoadOptionsFunctions,
+): 'calendlyApi' | 'calendlyOAuth2Api' {
+	const authentication = this.getNodeParameter('authentication', 0, 'oAuth2') as string;
+	return authentication === 'apiKey' ? 'calendlyApi' : 'calendlyOAuth2Api';
+}
 
-	const credentials = await this.getCredentials('calendlyApi');
+export async function calendlyApiRequest(
+	this: IExecuteFunctions | IWebhookFunctions | IHookFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+	body: IDataObject = {},
+	query: IDataObject = {},
+): Promise<IDataObject> {
+	const headers: IDataObject = {
+		'Content-Type': 'application/json',
+	};
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
+	const endpoint = 'https://api.calendly.com';
 
-	const endpoint = 'https://calendly.com/api/v1';
-
-	let options: OptionsWithUri = {
-		headers: {
-			'Content-Type': 'application/json',
-			'X-TOKEN': credentials.apiKey,
-		},
+	const options: LegacyRequestOptions = {
+		headers,
 		method,
 		body,
 		qs: query,
-		uri: uri || `${endpoint}${resource}`,
+		uri: requestUrl`${endpoint}${resource}`,
 		json: true,
 	};
+
 	if (!Object.keys(body).length) {
-		delete options.form;
+		delete options.body;
 	}
 	if (!Object.keys(query).length) {
 		delete options.qs;
 	}
-	options = Object.assign({}, options, option);
-	try {
-		return await this.helpers.request!(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+
+	const credentialsType = getCredentialsType.call(this);
+	return await this.helpers.requestWithAuthentication.call(this, credentialsType, options);
+}
+
+const WEBHOOK_SUBSCRIPTION_URI_PREFIX = 'https://api.calendly.com/webhook_subscriptions/';
+
+export async function deleteWebhookSubscription(
+	this: IHookFunctions,
+	webhookURI: string,
+): Promise<void> {
+	if (!webhookURI.startsWith(WEBHOOK_SUBSCRIPTION_URI_PREFIX)) return;
+
+	const id = webhookURI.slice(WEBHOOK_SUBSCRIPTION_URI_PREFIX.length);
+	await calendlyApiRequest.call(this, 'DELETE', requestPath`/webhook_subscriptions/${id}`);
 }

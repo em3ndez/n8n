@@ -1,17 +1,14 @@
-import {
-	INodeProperties,
-} from 'n8n-workflow';
+import type { INodeProperties } from 'n8n-workflow';
 
-export const folderOperations = [
+export const folderOperations: INodeProperties[] = [
 	{
 		displayName: 'Operation',
 		name: 'operation',
 		type: 'options',
+		noDataExpression: true,
 		displayOptions: {
 			show: {
-				resource: [
-					'folder',
-				],
+				resource: ['folder'],
 			},
 		},
 		options: [
@@ -19,38 +16,53 @@ export const folderOperations = [
 				name: 'Create',
 				value: 'create',
 				description: 'Create a folder',
+				action: 'Create a folder',
 			},
 			{
 				name: 'Delete',
 				value: 'delete',
 				description: 'Delete a folder',
+				action: 'Delete a folder',
 			},
 			{
 				name: 'Get Children',
 				value: 'getChildren',
 				description: 'Get items inside a folder',
+				action: 'Get items in a folder',
+			},
+			{
+				name: 'Move',
+				value: 'move',
+				description: 'Move a folder',
+				action: 'Move a folder',
+			},
+			{
+				name: 'Rename',
+				value: 'rename',
+				description: 'Rename a folder',
+				action: 'Rename a folder',
 			},
 			{
 				name: 'Search',
 				value: 'search',
 				description: 'Search a folder',
+				action: 'Search a folder',
 			},
 			{
 				name: 'Share',
 				value: 'share',
 				description: 'Share a folder',
+				action: 'Share a folder',
 			},
 		],
 		default: 'getChildren',
-		description: 'The operation to perform.',
 	},
-] as INodeProperties[];
+];
 
-export const folderFields = [
-
-/* -------------------------------------------------------------------------- */
-/*                                 folder:create                              */
-/* -------------------------------------------------------------------------- */
+export const folderFields: INodeProperties[] = [
+	/* -------------------------------------------------------------------------- */
+	/*                                 folder:create                              */
+	/* -------------------------------------------------------------------------- */
 	{
 		displayName: 'Name',
 		name: 'name',
@@ -59,12 +71,8 @@ export const folderFields = [
 		placeholder: '/Pictures/2021',
 		displayOptions: {
 			show: {
-				operation: [
-					'create',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['create'],
+				resource: ['folder'],
 			},
 		},
 		default: '',
@@ -76,12 +84,8 @@ export const folderFields = [
 		type: 'collection',
 		displayOptions: {
 			show: {
-				operation: [
-					'create',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['create'],
+				resource: ['folder'],
 			},
 		},
 		default: {},
@@ -96,63 +100,166 @@ export const folderFields = [
 			},
 		],
 	},
-/* -------------------------------------------------------------------------- */
-/*                                 folder:getChildren/delete                  */
-/* -------------------------------------------------------------------------- */
+	/* -------------------------------------------------------------------------- */
+	/*                                 folder:getChildren/delete                  */
+	/* -------------------------------------------------------------------------- */
 	{
 		displayName: 'Folder ID',
 		name: 'folderId',
 		type: 'string',
+		required: true,
 		displayOptions: {
 			show: {
-				operation: [
-					'delete',
-					'getChildren',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['delete', 'getChildren'],
+				resource: ['folder'],
 			},
 		},
 		default: '',
-		description: 'Folder ID',
+		description: 'The ID of the folder. Use `root` for the top-level folder.',
+		hint: 'Use `root` for the top-level folder of the drive',
 	},
-/* -------------------------------------------------------------------------- */
-/*                                 folder:search                              */
-/* -------------------------------------------------------------------------- */
+	/* -------------------------------------------------------------------------- */
+	/*                               folder:move                                  */
+	/* -------------------------------------------------------------------------- */
+	{
+		displayName: 'Folder ID',
+		name: 'folderId',
+		type: 'string',
+		required: true,
+		displayOptions: {
+			show: {
+				operation: ['move'],
+				resource: ['folder'],
+			},
+		},
+		default: '',
+		description: 'ID of the folder to move',
+	},
+	{
+		displayName: 'Destination Folder ID',
+		name: 'destinationFolderId',
+		type: 'string',
+		default: '',
+		placeholder: 'root',
+		displayOptions: {
+			show: {
+				operation: ['move'],
+				resource: ['folder'],
+			},
+		},
+		description:
+			"ID of the destination folder to move the item into. Use `root` for the drive's top-level folder.",
+	},
+	{
+		displayName: 'Additional Fields',
+		name: 'additionalFields',
+		type: 'collection',
+		placeholder: 'Add Field',
+		displayOptions: {
+			show: {
+				operation: ['move'],
+				resource: ['folder'],
+			},
+		},
+		default: {},
+		options: [
+			{
+				displayName: 'New Name',
+				name: 'name',
+				type: 'string',
+				default: '',
+				description: 'A new name for the folder. If omitted, the existing name is kept.',
+			},
+		],
+	},
+	/* -------------------------------------------------------------------------- */
+	/*                               folder:rename                                */
+	/* -------------------------------------------------------------------------- */
+	{
+		displayName: 'Item ID',
+		name: 'itemId',
+		type: 'string',
+		displayOptions: {
+			show: {
+				operation: ['rename'],
+				resource: ['folder'],
+			},
+		},
+		default: '',
+		description: 'ID of the folder',
+	},
+	{
+		displayName: 'New Name',
+		name: 'newName',
+		type: 'string',
+		displayOptions: {
+			show: {
+				operation: ['rename'],
+				resource: ['folder'],
+			},
+		},
+		default: '',
+		description: 'New name for folder',
+	},
+	/* -------------------------------------------------------------------------- */
+	/*                                 folder:search                              */
+	/* -------------------------------------------------------------------------- */
+	{
+		displayName:
+			'Search is not available with the Service Principal credential. App-only Microsoft Graph cannot search a drive — use Folder: Get Children, or switch to an OAuth2 credential.',
+		name: 'searchUnsupportedNotice',
+		type: 'notice',
+		default: '',
+		displayOptions: {
+			show: {
+				operation: ['search'],
+				resource: ['folder'],
+				authentication: ['microsoftEntraServicePrincipalApi'],
+			},
+		},
+	},
 	{
 		displayName: 'Query',
 		name: 'query',
 		type: 'string',
 		displayOptions: {
 			show: {
-				operation: [
-					'search',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['search'],
+				resource: ['folder'],
+			},
+			hide: {
+				authentication: ['microsoftEntraServicePrincipalApi'],
 			},
 		},
 		default: '',
-		description: `The query text used to search for items. Values may be matched
-		across several fields including filename, metadata, and file content.`,
+		description:
+			'The query text used to search for items. Values may be matched across several fields including filename, metadata, and file content.',
 	},
-/* -------------------------------------------------------------------------- */
-/*                                 folder:share                               */
-/* -------------------------------------------------------------------------- */
+	/* -------------------------------------------------------------------------- */
+	/*                                 folder:share                               */
+	/* -------------------------------------------------------------------------- */
+	{
+		displayName:
+			'With the Service Principal credential, creating a sharing link uses application permissions and may require additional tenant or admin configuration to succeed.',
+		name: 'shareServicePrincipalNotice',
+		type: 'notice',
+		default: '',
+		displayOptions: {
+			show: {
+				operation: ['share'],
+				resource: ['folder'],
+				authentication: ['microsoftEntraServicePrincipalApi'],
+			},
+		},
+	},
 	{
 		displayName: 'Folder ID',
 		name: 'folderId',
 		type: 'string',
 		displayOptions: {
 			show: {
-				operation: [
-					'share',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['share'],
+				resource: ['folder'],
 			},
 		},
 		default: '',
@@ -178,12 +285,8 @@ export const folderFields = [
 		],
 		displayOptions: {
 			show: {
-				operation: [
-					'share',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['share'],
+				resource: ['folder'],
 			},
 		},
 		default: '',
@@ -205,15 +308,11 @@ export const folderFields = [
 		],
 		displayOptions: {
 			show: {
-				operation: [
-					'share',
-				],
-				resource: [
-					'folder',
-				],
+				operation: ['share'],
+				resource: ['folder'],
 			},
 		},
 		default: '',
 		description: 'The type of sharing link to create',
 	},
-] as INodeProperties[];
+];

@@ -1,34 +1,30 @@
 import {
-	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
-	INodeExecutionData,
-	INodeType,
-	INodeTypeDescription,
-	NodeOperationError,
+	NodeConnectionTypes,
+	type IDataObject,
+	type IExecuteFunctions,
+	type INodeExecutionData,
+	type INodeType,
+	type INodeTypeDescription,
+	requestPath,
 } from 'n8n-workflow';
 
-import {
-	sms77ApiRequest,
-} from './GenericFunctions';
+import { sms77ApiRequest } from './GenericFunctions';
 
 export class Sms77 implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'sms77',
+		displayName: 'seven',
 		name: 'sms77',
-		icon: 'file:sms77.png',
+		icon: 'file:seven.svg',
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Send SMS and make text-to-speech calls',
 		defaults: {
-			name: 'Sms77',
-			color: '#00d46a',
+			name: 'seven',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'sms77Api',
@@ -40,6 +36,7 @@ export class Sms77 implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'SMS',
@@ -51,7 +48,6 @@ export class Sms77 implements INodeType {
 					},
 				],
 				default: 'sms',
-				description: 'The resource to operate on.',
 			},
 
 			// operations
@@ -59,11 +55,10 @@ export class Sms77 implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
-						resource: [
-							'sms',
-						],
+						resource: ['sms'],
 					},
 				},
 				options: [
@@ -71,20 +66,19 @@ export class Sms77 implements INodeType {
 						name: 'Send',
 						value: 'send',
 						description: 'Send SMS',
+						action: 'Send an SMS',
 					},
 				],
 				default: 'send',
-				description: 'The operation to perform',
 			},
 			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
-						resource: [
-							'voice',
-						],
+						resource: ['voice'],
 					},
 				},
 				options: [
@@ -92,10 +86,10 @@ export class Sms77 implements INodeType {
 						name: 'Send',
 						value: 'send',
 						description: 'Converts text to voice and calls a given number',
+						action: 'Convert text to voice',
 					},
 				],
 				default: 'send',
-				description: 'The operation to perform',
 			},
 			{
 				displayName: 'From',
@@ -103,18 +97,14 @@ export class Sms77 implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder: '+4901234567890',
-				required: false,
 				displayOptions: {
 					show: {
-						operation: [
-							'send',
-						],
-						resource: [
-							'sms',
-						],
+						operation: ['send'],
+						resource: ['sms'],
 					},
 				},
-				description: 'The caller ID displayed in the receivers display. Max 16 numeric or 11 alphanumeric characters',
+				description:
+					'The caller ID displayed in the receivers display. Max 16 numeric or 11 alphanumeric characters.',
 			},
 			{
 				displayName: 'To',
@@ -125,16 +115,12 @@ export class Sms77 implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						operation: [
-							'send',
-						],
-						resource: [
-							'sms',
-							'voice',
-						],
+						operation: ['send'],
+						resource: ['sms', 'voice'],
 					},
 				},
-				description: 'The number of your recipient(s) separated by comma. Can be regular numbers or contact/groups from Sms77',
+				description:
+					'The number of your recipient(s) separated by comma. Can be regular numbers or contact/groups from seven.',
 			},
 			{
 				displayName: 'Message',
@@ -142,18 +128,10 @@ export class Sms77 implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				typeOptions: {
-					alwaysOpenEditWindow: true,
-				},
 				displayOptions: {
 					show: {
-						operation: [
-							'send',
-						],
-						resource: [
-							'sms',
-							'voice',
-						],
+						operation: ['send'],
+						resource: ['sms', 'voice'],
 					},
 				},
 				description: 'The message to send. Max. 1520 characters',
@@ -162,26 +140,15 @@ export class Sms77 implements INodeType {
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
-				placeholder: 'Add Opton',
+				placeholder: 'Add Option',
 				default: {},
 				displayOptions: {
 					show: {
-						operation: [
-							'send',
-						],
-						resource: [
-							'sms',
-						],
+						operation: ['send'],
+						resource: ['sms'],
 					},
 				},
 				options: [
-					{
-						displayName: 'Debug',
-						name: 'debug',
-						type: 'boolean',
-						default: false,
-						description: 'If enabled, the API returns fake responses like in a sandbox',
-					},
 					{
 						displayName: 'Delay',
 						name: 'delay',
@@ -202,7 +169,8 @@ export class Sms77 implements INodeType {
 						name: 'flash',
 						type: 'boolean',
 						default: false,
-						description: 'Send as flash message being displayed directly the receiver\'s display',
+						// eslint-disable-next-line n8n-nodes-base/node-param-description-boolean-without-whether
+						description: "Send as flash message being displayed directly the receiver's display",
 					},
 					{
 						displayName: 'Label',
@@ -213,18 +181,12 @@ export class Sms77 implements INodeType {
 						description: 'Custom label used to group analytics',
 					},
 					{
-						displayName: 'No Reload',
-						name: 'no_reload',
-						type: 'boolean',
-						default: false,
-						description: 'Disable reload lock to allow sending duplicate messages',
-					},
-					{
 						displayName: 'Performance Tracking',
 						name: 'performance_tracking',
 						type: 'boolean',
 						default: false,
-						description: 'Enable performance tracking for URLs found in the message text',
+						description:
+							'Whether to enable performance tracking for URLs found in the message text',
 					},
 					{
 						displayName: 'TTL',
@@ -234,7 +196,8 @@ export class Sms77 implements INodeType {
 						typeOptions: {
 							minValue: 1,
 						},
-						description: 'Custom time to live specifying the validity period of a message in minutes',
+						description:
+							'Custom time to live specifying the validity period of a message in minutes',
 					},
 				],
 			},
@@ -242,40 +205,23 @@ export class Sms77 implements INodeType {
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
-				placeholder: 'Add Opton',
+				placeholder: 'Add Option',
 				default: {},
 				displayOptions: {
 					show: {
-						operation: [
-							'send',
-						],
-						resource: [
-							'voice',
-						],
+						operation: ['send'],
+						resource: ['voice'],
 					},
 				},
 				options: [
-					{
-						displayName: 'Debug',
-						name: 'debug',
-						type: 'boolean',
-						default: false,
-						description: 'If enabled, the API returns fake responses like in a sandbox',
-					},
 					{
 						displayName: 'From',
 						name: 'from',
 						type: 'string',
 						default: '',
 						placeholder: '+4901234567890',
-						description: 'The caller ID. Please use only verified sender IDs, one of your virtual inbound numbers or one of our shared virtual numbers',
-					},
-					{
-						displayName: 'XML',
-						name: 'xml',
-						type: 'boolean',
-						default: false,
-						description: 'Enable if text is of XML format',
+						description:
+							'The caller ID. Please use only verified sender IDs, one of your virtual inbound numbers or one of our shared virtual numbers.',
 					},
 				],
 			},
@@ -295,14 +241,14 @@ export class Sms77 implements INodeType {
 						const from = this.getNodeParameter('from', i) as string;
 						const to = this.getNodeParameter('to', i) as string;
 						const text = this.getNodeParameter('message', i) as string;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 						const body = {
 							from,
 							to,
 							text,
 							...options,
 						};
-						responseData = await sms77ApiRequest.call(this, 'POST', '/sms', body);
+						responseData = await sms77ApiRequest.call(this, 'POST', requestPath`/sms`, body);
 					}
 				}
 
@@ -310,13 +256,13 @@ export class Sms77 implements INodeType {
 					if (operation === 'send') {
 						const to = this.getNodeParameter('to', i) as string;
 						const text = this.getNodeParameter('message', i) as string;
-						const options = this.getNodeParameter('options', i) as IDataObject;
+						const options = this.getNodeParameter('options', i);
 						const body = {
 							to,
 							text,
 							...options,
 						};
-						responseData = await sms77ApiRequest.call(this, 'POST', '/voice', body);
+						responseData = await sms77ApiRequest.call(this, 'POST', requestPath`/voice`, body);
 					}
 				}
 
@@ -325,7 +271,6 @@ export class Sms77 implements INodeType {
 				} else if (responseData !== undefined) {
 					returnData.push(responseData as IDataObject);
 				}
-
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({ error: error.message });

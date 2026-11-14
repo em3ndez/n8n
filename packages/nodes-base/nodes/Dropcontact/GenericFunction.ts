@@ -1,42 +1,29 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
-} from 'n8n-core';
-
-import {
-	ICredentialDataDecryptedObject,
-	ICredentialTestFunctions,
 	IDataObject,
 	ILoadOptionsFunctions,
-	NodeApiError,
+	IPairedItemData,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
-
-import {
-	OptionsWithUri,
-} from 'request';
+import { requestUrl } from 'n8n-workflow';
 
 /**
  * Make an authenticated API request to Bubble.
  */
 export async function dropcontactApiRequest(
 	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
-	method: string,
-	endpoint: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 	body: IDataObject,
 	qs: IDataObject,
 ) {
-
-	const { apiKey } = await this.getCredentials('dropcontactApi') as {
-		apiKey: string,
-	};
-
-	const options: OptionsWithUri = {
-		headers: {
-			'user-agent': 'n8n',
-			'X-Access-Token': apiKey,
-		},
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
-		uri: `https://api.dropcontact.io${endpoint}`,
+		uri: requestUrl`https://api.dropcontact.io${endpoint}`,
 		qs,
 		body,
 		json: true,
@@ -50,33 +37,13 @@ export async function dropcontactApiRequest(
 		delete options.qs;
 	}
 
-	try {
-		return await this.helpers.request!(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+	return await this.helpers.requestWithAuthentication.call(this, 'dropcontactApi', options);
 }
 
-export async function validateCrendetials(this: ICredentialTestFunctions, decryptedCredentials: ICredentialDataDecryptedObject): Promise<any> { // tslint:disable-line:no-any
-	const credentials = decryptedCredentials;
-
-	const { apiKey } = credentials as {
-		apiKey: string,
-	};
-
-	const options: OptionsWithUri = {
-		headers: {
-			'user-agent': 'n8n',
-			'X-Access-Token': apiKey,
-		},
-		method: 'POST',
-		body: {
-			data: [{ email: '' }],
-		},
-		uri: `https://api.dropcontact.io/batch`,
-		json: true,
-	};
-
-	return this.helpers.request!(options);
+export function mapPairedItemsFrom<T>(iterable: Iterable<T> | ArrayLike<T>): IPairedItemData[] {
+	return Array.from(iterable, (_, i) => i).map((index) => {
+		return {
+			item: index,
+		};
+	});
 }
-

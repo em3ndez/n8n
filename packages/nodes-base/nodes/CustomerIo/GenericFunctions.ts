@@ -1,70 +1,57 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	IHttpRequestMethods,
+	IHttpRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { decodePathValue, requestUrl } from 'n8n-workflow';
 
-import {
-	get,
-} from 'lodash';
-
-export async function customerIoApiRequest(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, body: object, baseApi?: string, query?: IDataObject): Promise<any> { // tslint:disable-line:no-any
+export async function customerIoApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: object,
+	baseApi?: string,
+	_query?: IDataObject,
+) {
 	const credentials = await this.getCredentials('customerIoApi');
+	const isEu = credentials.region === 'track-eu.customer.io';
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
-
-	query = query || {};
-
-	const options: OptionsWithUri = {
+	const options: WithRequestTarget<IHttpRequestOptions> = {
 		headers: {
 			'Content-Type': 'application/json',
 		},
 		method,
 		body,
-		uri: '',
+		url:
+			baseApi === 'tracking'
+				? requestUrl`https://${isEu ? 'track-eu' : 'track'}.customer.io/api/v1${endpoint}`
+				: requestUrl`https://${isEu ? 'api-eu' : 'api'}.customer.io/v1${endpoint}`,
 		json: true,
 	};
 
-	if (baseApi === 'tracking') {
-		options.uri = `https://track.customer.io/api/v1${endpoint}`;
-		const basicAuthKey = Buffer.from(`${credentials.trackingSiteId}:${credentials.trackingApiKey}`).toString('base64');
-		Object.assign(options.headers, { 'Authorization': `Basic ${basicAuthKey}` });
-	} else if (baseApi === 'api') {
-		options.uri = `https://api.customer.io/v1/api${endpoint}`;
-		const basicAuthKey = Buffer.from(`${credentials.trackingSiteId}:${credentials.trackingApiKey}`).toString('base64');
-		Object.assign(options.headers, { 'Authorization': `Basic ${basicAuthKey}` });
-	} else if (baseApi === 'beta') {
-		options.uri = `https://beta-api.customer.io/v1/api${endpoint}`;
-		Object.assign(options.headers, { 'Authorization': `Bearer ${credentials.appApiKey as string}` });
-	}
-
-	try {
-		return await this.helpers.request!(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+	return await this.helpers.requestWithAuthentication.call(this, 'customerIoApi', options);
 }
 
-export function eventExists(currentEvents: string[], webhookEvents: IDataObject) {
-	for (const currentEvent of currentEvents) {
-		if (get(webhookEvents, `${currentEvent.split('.')[0]}.${currentEvent.split('.')[1]}`) !== true) {
-			return false;
-		}
-	}
-	return true;
+export const toPathValue = (version: number, value: string) =>
+	version < 1.1 ? decodePathValue(value) : value;
+
+/** Convert dot-separated event names to underscore-separated API format */
+export function toApiEventName(event: string): string {
+	return event.replaceAll('.', '_');
 }
 
-export function validateJSON(json: string | undefined): any { // tslint:disable-line:no-any
+/** Check if all current events exist in the webhook's event list */
+export function eventExists(currentEvents: string[], webhookEvents: string[]) {
+	const webhookEventSet = new Set(webhookEvents);
+	return currentEvents.every((event) => webhookEventSet.has(toApiEventName(event)));
+}
+
+export function validateJSON(json: string | undefined): any {
 	let result;
 	try {
 		result = JSON.parse(json!);

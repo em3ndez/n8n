@@ -1,14 +1,12 @@
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError, requestPath } from 'n8n-workflow';
 
 import {
 	endOfDayDataFields,
@@ -18,35 +16,29 @@ import {
 	tickerFields,
 	tickerOperations,
 } from './descriptions';
-
 import {
 	format,
 	marketstackApiRequest,
 	marketstackApiRequestAllItems,
 	validateTimeOptions,
 } from './GenericFunctions';
-
-import {
-	EndOfDayDataFilters,
-	Operation,
-	Resource,
-} from './types';
+import type { EndOfDayDataFilters, Operation, Resource } from './types';
 
 export class Marketstack implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Marketstack',
 		name: 'marketstack',
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
-		icon: 'file:marketstack.svg',
+		icon: { light: 'file:marketstack.svg', dark: 'file:marketstack.dark.svg' },
 		group: ['transform'],
 		version: 1,
 		description: 'Consume Marketstack API',
 		defaults: {
 			name: 'Marketstack',
-			color: '#02283e',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'marketstackApi',
@@ -58,6 +50,7 @@ export class Marketstack implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'End-of-Day Data',
@@ -93,17 +86,13 @@ export class Marketstack implements INodeType {
 		const resource = this.getNodeParameter('resource', 0) as Resource;
 		const operation = this.getNodeParameter('operation', 0) as Operation;
 
-		let responseData: any; // tslint:disable-line: no-any
-		const returnData: IDataObject[] = [];
+		let responseData: any;
+		const returnData: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
-
 			try {
-
 				if (resource === 'endOfDayData') {
-
 					if (operation === 'getAll') {
-
 						// ----------------------------------
 						//       endOfDayData: getAll
 						// ----------------------------------
@@ -112,16 +101,13 @@ export class Marketstack implements INodeType {
 							symbols: this.getNodeParameter('symbols', i),
 						};
 
-						const {
-							latest,
-							specificDate,
-							dateFrom,
-							dateTo,
-							...rest
-						} = this.getNodeParameter('filters', i) as EndOfDayDataFilters;
+						const { latest, specificDate, dateFrom, dateTo, ...rest } = this.getNodeParameter(
+							'filters',
+							i,
+						) as EndOfDayDataFilters;
 
 						validateTimeOptions.call(this, [
-							latest !== undefined && latest !== false,
+							latest !== undefined && latest,
 							specificDate !== undefined,
 							dateFrom !== undefined && dateTo !== undefined,
 						]);
@@ -130,74 +116,70 @@ export class Marketstack implements INodeType {
 							Object.assign(qs, rest);
 						}
 
-						let endpoint: string;
+						let endpoint: RequestPath;
 
 						if (latest) {
-							endpoint = '/eod/latest';
+							endpoint = requestPath`/eod/latest`;
 						} else if (specificDate) {
-							endpoint = `/eod/${format(specificDate)}`;
+							endpoint = requestPath`/eod/${format(specificDate)}`;
 						} else {
 							if (!dateFrom || !dateTo) {
 								throw new NodeOperationError(
 									this.getNode(),
 									'Please enter a start and end date to filter by timeframe.',
+									{ itemIndex: i },
 								);
 							}
-							endpoint = '/eod';
+							endpoint = requestPath`/eod`;
 							qs.date_from = format(dateFrom);
 							qs.date_to = format(dateTo);
 						}
 
 						responseData = await marketstackApiRequestAllItems.call(this, 'GET', endpoint, {}, qs);
-
 					}
-
 				} else if (resource === 'exchange') {
-
 					if (operation === 'get') {
-
 						// ----------------------------------
 						//          exchange: get
 						// ----------------------------------
 
 						const exchange = this.getNodeParameter('exchange', i);
-						const endpoint = `/exchanges/${exchange}`;
+						const endpoint = requestPath`/exchanges/${exchange}`;
 
 						responseData = await marketstackApiRequest.call(this, 'GET', endpoint);
-
 					}
-
 				} else if (resource === 'ticker') {
-
 					if (operation === 'get') {
-
 						// ----------------------------------
 						//           ticker: get
 						// ----------------------------------
 
 						const symbol = this.getNodeParameter('symbol', i);
-						const endpoint = `/tickers/${symbol}`;
+						const endpoint = requestPath`/tickers/${symbol}`;
 
 						responseData = await marketstackApiRequest.call(this, 'GET', endpoint);
-
 					}
-
 				}
-
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionErrorData);
 					continue;
 				}
 				throw error;
 			}
 
-			Array.isArray(responseData)
-				? returnData.push(...responseData)
-				: returnData.push(responseData);
+			const executionData = this.helpers.constructExecutionMetaData(
+				this.helpers.returnJsonArray(responseData as IDataObject[]),
+				{ itemData: { item: i } },
+			);
 
+			returnData.push(...executionData);
 		}
 
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

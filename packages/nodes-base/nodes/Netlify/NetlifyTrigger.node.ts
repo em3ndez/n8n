@@ -1,9 +1,8 @@
-import {
+import { snakeCase } from 'change-case';
+import { randomBytes } from 'crypto';
+import type {
 	IHookFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodePropertyOptions,
@@ -11,15 +10,10 @@ import {
 	INodeTypeDescription,
 	IWebhookResponseData,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-
-import {
-	netlifyApiRequest,
-} from './GenericFunctions';
-
-import {
-	snakeCase,
-} from 'change-case';
+import { netlifyApiRequest } from './GenericFunctions';
+import { verifySignature } from './NetlifyTriggerHelpers';
 
 export class NetlifyTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -32,10 +26,9 @@ export class NetlifyTrigger implements INodeType {
 		description: 'Handle netlify events via webhooks',
 		defaults: {
 			name: 'Netlify Trigger',
-			color: '#6ad7b9',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'netlifyApi',
@@ -52,7 +45,7 @@ export class NetlifyTrigger implements INodeType {
 		],
 		properties: [
 			{
-				displayName: 'Site Name/ID',
+				displayName: 'Site Name or ID',
 				name: 'siteId',
 				required: true,
 				type: 'options',
@@ -60,7 +53,8 @@ export class NetlifyTrigger implements INodeType {
 				typeOptions: {
 					loadOptionsMethod: 'getSites',
 				},
-				description: 'Select the Site ID',
+				description:
+					'Select the Site ID. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Event',
@@ -88,41 +82,38 @@ export class NetlifyTrigger implements INodeType {
 				],
 			},
 			{
-				displayName: 'Form ID',
+				displayName: 'Form Name or ID',
 				name: 'formId',
 				type: 'options',
 				required: true,
 				displayOptions: {
 					show: {
-						event: [
-							'submissionCreated',
-						],
+						event: ['submissionCreated'],
 					},
 				},
 				default: '',
 				typeOptions: {
 					loadOptionsMethod: 'getForms',
 				},
-				description: 'Select a form',
+				description:
+					'Select a form. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
-				displayName: 'Simplify Response',
+				displayName: 'Simplify',
 				name: 'simple',
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						event: [
-							'submissionCreated',
-						],
+						event: ['submissionCreated'],
 					},
 				},
 				default: true,
-				description: 'Whether to return a simplified version of the response instead of the raw data',
+				description:
+					'Whether to return a simplified version of the response instead of the raw data',
 			},
 		],
 	};
 
-	// @ts-ignore
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -131,7 +122,7 @@ export class NetlifyTrigger implements INodeType {
 				const webhookUrl = this.getNodeWebhookUrl('default');
 				const event = this.getNodeParameter('event') as string;
 				qs.site_id = this.getNodeParameter('siteId') as string;
-				const webhooks = await netlifyApiRequest.call(this, 'GET', '/hooks', {}, qs);
+				const webhooks = await netlifyApiRequest.call(this, 'GET', requestPath`/hooks`, {}, qs);
 				for (const webhook of webhooks) {
 					if (webhook.type === 'url') {
 						if (webhook.data.url === webhookUrl && webhook.event === snakeCase(event)) {
@@ -148,10 +139,12 @@ export class NetlifyTrigger implements INodeType {
 				const webhookUrl = this.getNodeWebhookUrl('default');
 				const webhookData = this.getWorkflowStaticData('node');
 				const event = this.getNodeParameter('event') as string;
+				const webhookSecret = randomBytes(32).toString('hex');
 				const body: IDataObject = {
 					event: snakeCase(event),
 					data: {
 						url: webhookUrl,
+						signature_secret: webhookSecret,
 					},
 					site_id: this.getNodeParameter('siteId') as string,
 				};
@@ -159,18 +152,24 @@ export class NetlifyTrigger implements INodeType {
 				if (event === 'submissionCreated' && formId !== '*') {
 					body.form_id = this.getNodeParameter('formId') as string;
 				}
-				const webhook = await netlifyApiRequest.call(this, 'POST', '/hooks', body);
+				const webhook = await netlifyApiRequest.call(this, 'POST', requestPath`/hooks`, body);
 				webhookData.webhookId = webhook.id;
+				webhookData.webhookSecret = webhookSecret;
 				return true;
 			},
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				try {
-					await netlifyApiRequest.call(this, 'DELETE', `/hooks/${webhookData.webhookId}`);
+					await netlifyApiRequest.call(
+						this,
+						'DELETE',
+						requestPath`/hooks/${webhookData.webhookId}`,
+					);
 				} catch (error) {
 					return false;
 				}
 				delete webhookData.webhookId;
+				delete webhookData.webhookSecret;
 				return true;
 			},
 		},
@@ -180,11 +179,7 @@ export class NetlifyTrigger implements INodeType {
 		loadOptions: {
 			async getSites(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const sites = await netlifyApiRequest.call(
-					this,
-					'GET',
-					'/sites',
-				);
+				const sites = await netlifyApiRequest.call(this, 'GET', requestPath`/sites`);
 				for (const site of sites) {
 					returnData.push({
 						name: site.name,
@@ -200,7 +195,7 @@ export class NetlifyTrigger implements INodeType {
 				const forms = await netlifyApiRequest.call(
 					this,
 					'GET',
-					`/sites/${siteId}/forms`,
+					requestPath`/sites/${siteId}/forms`,
 				);
 				for (const form of forms) {
 					returnData.push({
@@ -215,19 +210,25 @@ export class NetlifyTrigger implements INodeType {
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		if (!verifySignature.call(this)) {
+			const res = this.getResponseObject();
+			res.status(401).send('Unauthorized').end();
+			return {
+				noWebhookResponse: true,
+			};
+		}
+
 		const req = this.getRequestObject();
 		const simple = this.getNodeParameter('simple', false) as boolean;
 		const event = this.getNodeParameter('event') as string;
 		let response = req.body;
 
-		if (simple === true && event === 'submissionCreated') {
+		if (simple && event === 'submissionCreated') {
 			response = response.data;
 		}
 
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(response),
-			],
+			workflowData: [this.helpers.returnJsonArray(response as IDataObject)],
 		};
 	}
 }

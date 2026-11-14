@@ -1,44 +1,32 @@
-import {
+import moment from 'moment-timezone';
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	ouraApiRequest,
-} from './GenericFunctions';
-
-import {
-	profileOperations,
-} from './ProfileDescription';
-
-import {
-	summaryFields,
-	summaryOperations,
-} from './SummaryDescription';
-
-import * as moment from 'moment';
+import { ouraApiRequest } from './GenericFunctions';
+import { profileOperations } from './ProfileDescription';
+import { summaryFields, summaryOperations } from './SummaryDescription';
 
 export class Oura implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Oura',
 		name: 'oura',
-		icon: 'file:oura.svg',
+		icon: { light: 'file:oura.svg', dark: 'file:oura.dark.svg' },
 		group: ['output'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Consume Oura API',
 		defaults: {
 			name: 'Oura',
-			color: '#2f4a73',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'ouraApi',
@@ -50,6 +38,7 @@ export class Oura implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Profile',
@@ -61,7 +50,6 @@ export class Oura implements INodeType {
 					},
 				],
 				default: 'summary',
-				description: 'Resource to consume.',
 			},
 			...profileOperations,
 			...summaryOperations,
@@ -74,105 +62,134 @@ export class Oura implements INodeType {
 		const length = items.length;
 
 		let responseData;
-		const returnData: IDataObject[] = [];
+		const returnData: INodeExecutionData[] = [];
 
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
 
 		for (let i = 0; i < length; i++) {
+			try {
+				if (resource === 'profile') {
+					// *********************************************************************
+					//                             profile
+					// *********************************************************************
 
-			if (resource === 'profile') {
+					// https://cloud.ouraring.com/v2/docs#operation/Single_Personal_Info_Document_v2_usercollection_personal_info_get
 
-				// *********************************************************************
-				//                             profile
-				// *********************************************************************
+					if (operation === 'get') {
+						// ----------------------------------
+						//         profile: get
+						// ----------------------------------
 
-				// https://cloud.ouraring.com/docs/personal-info
+						responseData = await ouraApiRequest.call(
+							this,
+							'GET',
+							requestPath`/usercollection/personal_info`,
+						);
+					}
+				} else if (resource === 'summary') {
+					// *********************************************************************
+					//                             summary
+					// *********************************************************************
 
-				if (operation === 'get') {
+					const qs: IDataObject = {};
 
-					// ----------------------------------
-					//         profile: get
-					// ----------------------------------
+					const { start, end } = this.getNodeParameter('filters', i) as {
+						start: string;
+						end: string;
+					};
 
-					responseData = await ouraApiRequest.call(this, 'GET', '/userinfo');
+					const returnAll = this.getNodeParameter('returnAll', 0);
 
-				}
-
-			} else if (resource === 'summary') {
-
-				// *********************************************************************
-				//                             summary
-				// *********************************************************************
-
-				// https://cloud.ouraring.com/docs/daily-summaries
-
-				const qs: IDataObject = {};
-
-				const { start, end } = this.getNodeParameter('filters', i) as { start: string; end: string; };
-
-				const returnAll = this.getNodeParameter('returnAll', 0) as boolean;
-
-				if (start) {
-					qs.start = moment(start).format('YYYY-MM-DD');
-				}
-
-				if (end) {
-					qs.end = moment(end).format('YYYY-MM-DD');
-				}
-
-				if (operation === 'getActivity') {
-
-					// ----------------------------------
-					//       profile: getActivity
-					// ----------------------------------
-
-					responseData = await ouraApiRequest.call(this, 'GET', '/activity', {}, qs);
-					responseData = responseData.activity;
-
-					if (returnAll === false) {
-						const limit = this.getNodeParameter('limit', 0) as number;
-						responseData = responseData.splice(0, limit);
+					if (start) {
+						qs.start_date = moment(start).format('YYYY-MM-DD');
 					}
 
-				} else if (operation === 'getReadiness') {
-
-					// ----------------------------------
-					//       profile: getReadiness
-					// ----------------------------------
-
-					responseData = await ouraApiRequest.call(this, 'GET', '/readiness', {}, qs);
-					responseData = responseData.readiness;
-
-					if (returnAll === false) {
-						const limit = this.getNodeParameter('limit', 0) as number;
-						responseData = responseData.splice(0, limit);
+					if (end) {
+						qs.end_date = moment(end).format('YYYY-MM-DD');
 					}
 
-				} else if (operation === 'getSleep') {
+					if (operation === 'getActivity') {
+						// ----------------------------------
+						//       profile: getActivity
+						// ----------------------------------
 
-					// ----------------------------------
-					//         profile: getSleep
-					// ----------------------------------
+						// https://cloud.ouraring.com/v2/docs#operation/Multiple_daily_activity_Documents_v2_usercollection_daily_activity_get
 
-					responseData = await ouraApiRequest.call(this, 'GET', '/sleep', {}, qs);
-					responseData = responseData.sleep;
+						responseData = await ouraApiRequest.call(
+							this,
+							'GET',
+							requestPath`/usercollection/daily_activity`,
+							{},
+							qs,
+						);
+						responseData = responseData.data;
 
-					if (returnAll === false) {
-						const limit = this.getNodeParameter('limit', 0) as number;
-						responseData = responseData.splice(0, limit);
+						if (!returnAll) {
+							const limit = this.getNodeParameter('limit', 0);
+							responseData = responseData.splice(0, limit);
+						}
+					} else if (operation === 'getReadiness') {
+						// ----------------------------------
+						//       profile: getReadiness
+						// ----------------------------------
+
+						// https://cloud.ouraring.com/v2/docs#operation/Multiple_daily_readiness_Documents_v2_usercollection_daily_readiness_get
+
+						responseData = await ouraApiRequest.call(
+							this,
+							'GET',
+							requestPath`/usercollection/daily_readiness`,
+							{},
+							qs,
+						);
+						responseData = responseData.data;
+
+						if (!returnAll) {
+							const limit = this.getNodeParameter('limit', 0);
+							responseData = responseData.splice(0, limit);
+						}
+					} else if (operation === 'getSleep') {
+						// ----------------------------------
+						//         profile: getSleep
+						// ----------------------------------
+
+						// https://cloud.ouraring.com/v2/docs#operation/Multiple_daily_sleep_Documents_v2_usercollection_daily_sleep_get
+
+						responseData = await ouraApiRequest.call(
+							this,
+							'GET',
+							requestPath`/usercollection/daily_sleep`,
+							{},
+							qs,
+						);
+						responseData = responseData.data;
+
+						if (!returnAll) {
+							const limit = this.getNodeParameter('limit', 0);
+							responseData = responseData.splice(0, limit);
+						}
 					}
-
 				}
 
+				const executionData = this.helpers.constructExecutionMetaData(
+					this.helpers.returnJsonArray(responseData as IDataObject[]),
+					{ itemData: { item: i } },
+				);
+
+				returnData.push(...executionData);
+			} catch (error) {
+				if (this.continueOnFail()) {
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionErrorData);
+					continue;
+				}
+				throw error;
 			}
-
-			Array.isArray(responseData)
-				? returnData.push(...responseData)
-				: returnData.push(responseData);
-
 		}
-
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

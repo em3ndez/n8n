@@ -1,99 +1,102 @@
-import {
-	INodeProperties,
-} from 'n8n-workflow';
+import type { INodeProperties } from 'n8n-workflow';
 
-export const contactOperations = [
+import { accountResourceLocator } from './SharedDescriptions';
+
+export const contactOperations: INodeProperties[] = [
 	{
 		displayName: 'Operation',
 		name: 'operation',
 		type: 'options',
+		noDataExpression: true,
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
+				resource: ['contact'],
 			},
 		},
 		options: [
 			{
-				name: 'Add Lead To Campaign',
+				name: 'Add Contact To Campaign',
 				value: 'addToCampaign',
-				description: 'Add lead to a campaign',
+				description: 'Add contact to a campaign',
+				action: 'Add a contact to a campaign',
 			},
 			{
 				name: 'Add Note',
 				value: 'addNote',
 				description: 'Add note to a contact',
+				action: 'Add a note to a contact',
 			},
 			{
 				name: 'Create',
 				value: 'create',
 				description: 'Create a contact',
+				action: 'Create a contact',
 			},
 			{
 				name: 'Create or Update',
 				value: 'upsert',
-				description: 'Create a new contact, or update the current one if it already exists (upsert)',
+				description:
+					'Create a new contact, or update the current one if it already exists (upsert)',
+				action: 'Create or update a contact',
 			},
 			{
 				name: 'Delete',
 				value: 'delete',
 				description: 'Delete a contact',
+				action: 'Delete a contact',
 			},
 			{
 				name: 'Get',
 				value: 'get',
 				description: 'Get a contact',
+				action: 'Get a contact',
+			},
+			{
+				name: 'Get Many',
+				value: 'getAll',
+				description: 'Get many contacts',
+				action: 'Get many contacts',
 			},
 			{
 				name: 'Get Summary',
 				value: 'getSummary',
-				description: `Returns an overview of contact's metadata`,
-			},
-			{
-				name: 'Get All',
-				value: 'getAll',
-				description: 'Get all contacts',
+				description: "Returns an overview of contact's metadata",
+				action: 'Get a contact summary',
 			},
 			{
 				name: 'Update',
 				value: 'update',
 				description: 'Update a contact',
+				action: 'Update a contact',
 			},
 		],
 		default: 'create',
-		description: 'The operation to perform.',
 	},
-] as INodeProperties[];
+];
 
-export const contactFields = [
-
+export const contactFields: INodeProperties[] = [
 	/* -------------------------------------------------------------------------- */
 	/*                                contact:create                              */
 	/* -------------------------------------------------------------------------- */
 	{
+		// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
 		displayName: 'Match Against',
 		name: 'externalId',
 		type: 'options',
 		typeOptions: {
 			loadOptionsMethod: 'getExternalIdFields',
-			loadOptionsDependsOn: [
-				'resource',
-			],
+			loadOptionsDependsOn: ['resource'],
 		},
 		required: true,
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'upsert',
-				],
+				resource: ['contact'],
+				operation: ['upsert'],
 			},
 		},
-		description: `The field to check to see if the contact already exists`,
+		description:
+			'The field to check to see if the contact already exists. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 	},
 	{
 		displayName: 'Value to Match',
@@ -103,15 +106,12 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'upsert',
-				],
+				resource: ['contact'],
+				operation: ['upsert'],
 			},
 		},
-		description: `If this value exists in the 'match against' field, update the contact. Otherwise create a new one`,
+		description:
+			"If this value exists in the 'match against' field, update the contact. Otherwise create a new one.",
 	},
 	{
 		displayName: 'Last Name',
@@ -121,13 +121,8 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'create',
-					'upsert',
-				],
+				resource: ['contact'],
+				operation: ['create', 'upsert'],
 			},
 		},
 		description: 'Required. Last name of the contact. Limited to 80 characters.',
@@ -140,46 +135,32 @@ export const contactFields = [
 		default: {},
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'create',
-					'upsert',
-				],
+				resource: ['contact'],
+				operation: ['create', 'upsert'],
 			},
 		},
 		options: [
-			{
-				displayName: 'Account',
-				name: 'acconuntId',
-				type: 'options',
-				typeOptions: {
-					loadOptionsMethod: 'getAccounts',
-				},
-				default: '',
-				description: 'ID of the account that is the parent of this contact.',
-			},
+			accountResourceLocator('acconuntId', 'The account that is the parent of this contact'),
 			{
 				displayName: 'Assistant Name',
 				name: 'assistantName',
 				type: 'string',
 				default: '',
-				description: 'The name of the assistant.',
+				description: 'The name of the assistant',
 			},
 			{
 				displayName: 'Assistant Phone',
 				name: 'Assistant Phone',
 				type: 'string',
 				default: '',
-				description: 'The telephone number of the assistant.',
+				description: 'The telephone number of the assistant',
 			},
 			{
 				displayName: 'Birth Date',
 				name: 'birthdate',
 				type: 'dateTime',
 				default: '',
-				description: 'The birth date of the contact.',
+				description: 'The birth date of the contact',
 			},
 			{
 				displayName: 'Custom Fields',
@@ -189,7 +170,7 @@ export const contactFields = [
 				typeOptions: {
 					multipleValues: true,
 				},
-				description: 'Filter by custom fields ',
+				description: 'Filter by custom fields',
 				default: {},
 				options: [
 					{
@@ -197,21 +178,22 @@ export const contactFields = [
 						displayName: 'Custom Field',
 						values: [
 							{
-								displayName: 'Field ID',
+								displayName: 'Field Name or ID',
 								name: 'fieldId',
 								type: 'options',
 								typeOptions: {
 									loadOptionsMethod: 'getCustomFields',
 								},
 								default: '',
-								description: 'The ID of the field to add custom field to.',
+								description:
+									'The ID of the field to add custom field to. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 							},
 							{
 								displayName: 'Value',
 								name: 'value',
 								type: 'string',
 								default: '',
-								description: 'The value to set on custom field.',
+								description: 'The value to set on custom field',
 							},
 						],
 					},
@@ -222,7 +204,7 @@ export const contactFields = [
 				name: 'department',
 				type: 'string',
 				default: '',
-				description: 'The department of the contact.',
+				description: 'The department of the contact',
 			},
 			{
 				displayName: 'Description',
@@ -235,22 +217,32 @@ export const contactFields = [
 				displayName: 'Email',
 				name: 'email',
 				type: 'string',
+				placeholder: 'name@email.com',
 				default: '',
-				description: 'Email address for the contact.',
+				description: 'Email address for the contact',
 			},
 			{
 				displayName: 'Email Bounced Date',
 				name: 'otherPostalCode',
 				type: 'dateTime',
 				default: '',
-				description: 'If bounce management is activated and an email sent to the contact bounces, the date and time the bounce occurred.',
+				description:
+					'If bounce management is activated and an email sent to the contact bounces, the date and time the bounce occurred',
 			},
 			{
 				displayName: 'Email Bounced Reason',
 				name: 'emailBouncedReason',
 				type: 'string',
 				default: '',
-				description: 'If bounce management is activated and an email sent to the contact bounces, the reason the bounce occurred.',
+				description:
+					'If bounce management is activated and an email sent to the contact bounces, the reason the bounce occurred',
+			},
+			{
+				displayName: 'Email Opt Out',
+				name: 'hasOptedOutOfEmail',
+				type: 'boolean',
+				default: false,
+				description: 'Whether the contact does not want to receive email from Salesforce',
 			},
 			{
 				displayName: 'Fax',
@@ -267,6 +259,20 @@ export const contactFields = [
 				description: 'First name of the contact. Maximum size is 40 characters.',
 			},
 			{
+				displayName: 'Middle Name',
+				name: 'middleName',
+				type: 'string',
+				default: '',
+				description: 'Middle name of the contact. Maximum size is 40 characters.',
+			},
+			{
+				displayName: 'Suffix',
+				name: 'suffix',
+				type: 'string',
+				default: '',
+				description: 'Name suffix of the contact. Maximum size is 40 characters.',
+			},
+			{
 				displayName: 'Home Phone',
 				name: 'homePhone',
 				type: 'string',
@@ -278,18 +284,19 @@ export const contactFields = [
 				name: 'jigsaw',
 				type: 'string',
 				default: '',
-				description: `references the ID of a contact in Data.com.
-				If a contact has a value in this field, it means that a contact was imported as a contact from Data.com.`,
+				description:
+					'References the ID of a contact in Data.com. If a contact has a value in this field, it means that a contact was imported as a contact from Data.com.',
 			},
 			{
-				displayName: 'Lead Source',
+				displayName: 'Lead Source Name or ID',
 				name: 'leadSource',
 				type: 'options',
 				typeOptions: {
 					loadOptionsMethod: 'getLeadSources',
 				},
 				default: '',
-				description: 'Source from which the lead was obtained.',
+				description:
+					'Source from which the lead was obtained. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Mailing City',
@@ -308,7 +315,7 @@ export const contactFields = [
 				name: 'mobilePhone',
 				type: 'string',
 				default: '',
-				description: `Contact’s mobile phone number.`,
+				description: 'Contact’s mobile phone number',
 			},
 			{
 				displayName: 'Mailing Postal Code',
@@ -327,7 +334,7 @@ export const contactFields = [
 				name: 'mailingStreet',
 				type: 'string',
 				default: '',
-				description: 'Street address for mailing address.',
+				description: 'Street address for mailing address',
 			},
 			{
 				displayName: 'Other City',
@@ -346,7 +353,7 @@ export const contactFields = [
 				name: 'otherPhone',
 				type: 'string',
 				default: '',
-				description: 'Telephone for alternate address.',
+				description: 'Telephone for alternate address',
 			},
 			{
 				displayName: 'Other Postal Code',
@@ -365,29 +372,55 @@ export const contactFields = [
 				name: 'otherStreet',
 				type: 'string',
 				default: '',
-				description: 'Street for alternate address.',
+				description: 'Street for alternate address',
 			},
 			{
 				displayName: 'Owner',
 				name: 'owner',
-				type: 'options',
-				typeOptions: {
-					loadOptionsMethod: 'getUsers',
-				},
-				default: '',
-				description: 'The owner of the contact.',
+				type: 'resourceLocator',
+				default: { mode: 'list', value: '' },
+				modes: [
+					{
+						displayName: 'From List',
+						name: 'list',
+						type: 'list',
+						placeholder: 'Select a user...',
+						typeOptions: {
+							searchListMethod: 'searchUsers',
+							searchable: true,
+						},
+					},
+					{
+						displayName: 'By ID',
+						name: 'id',
+						type: 'string',
+						placeholder: '0051700000ABCDE',
+						validation: [
+							{
+								type: 'regex',
+								properties: {
+									regex: '^(?:[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18})$',
+									errorMessage: 'User ID must be 15 or 18 alphanumeric characters',
+								},
+							},
+						],
+					},
+				],
+				description: 'The user who owns the contact',
 			},
 			{
 				displayName: 'Phone',
 				name: 'phone',
 				type: 'string',
 				default: '',
-				description: 'Phone number for the contact.',
+				description: 'Phone number for the contact',
 			},
 			{
-				displayName: 'Record Type ID',
+				displayName: 'Record Type Name or ID',
 				name: 'recordTypeId',
 				type: 'options',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'getRecordTypes',
 				},
@@ -398,14 +431,29 @@ export const contactFields = [
 				name: 'salutation',
 				type: 'string',
 				default: '',
-				description: 'Honorific abbreviation, word, or phrase to be used in front of name in greetings, such as Dr. or Mrs.',
+				description:
+					'Honorific abbreviation, word, or phrase to be used in front of name in greetings, such as Dr. or Mrs.',
+			},
+			{
+				displayName: 'Pronouns',
+				name: 'pronouns',
+				type: 'string',
+				default: '',
+				description: "The contact's personal pronouns",
+			},
+			{
+				displayName: 'Gender Identity',
+				name: 'genderIdentity',
+				type: 'string',
+				default: '',
+				description: "The contact's gender identity",
 			},
 			{
 				displayName: 'Title',
 				name: 'title',
 				type: 'string',
 				default: '',
-				description: 'Title of the contact such as CEO or Vice President.',
+				description: 'Title of the contact such as CEO or Vice President',
 			},
 		],
 	},
@@ -421,15 +469,11 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'update',
-				],
+				resource: ['contact'],
+				operation: ['update'],
 			},
 		},
-		description: 'ID of contact that needs to be fetched.',
+		description: 'ID of contact that needs to be fetched',
 	},
 	{
 		displayName: 'Update Fields',
@@ -439,45 +483,32 @@ export const contactFields = [
 		default: {},
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'update',
-				],
+				resource: ['contact'],
+				operation: ['update'],
 			},
 		},
 		options: [
-			{
-				displayName: 'Account',
-				name: 'acconuntId',
-				type: 'options',
-				typeOptions: {
-					loadOptionsMethod: 'getAccounts',
-				},
-				default: '',
-				description: 'ID of the account that is the parent of this contact.',
-			},
+			accountResourceLocator('acconuntId', 'The account that is the parent of this contact'),
 			{
 				displayName: 'Assistant Name',
 				name: 'assistantName',
 				type: 'string',
 				default: '',
-				description: 'The name of the assistant.',
+				description: 'The name of the assistant',
 			},
 			{
 				displayName: 'Assistant Phone',
 				name: 'Assistant Phone',
 				type: 'string',
 				default: '',
-				description: 'The telephone number of the assistant.',
+				description: 'The telephone number of the assistant',
 			},
 			{
 				displayName: 'Birth Date',
 				name: 'birthdate',
 				type: 'dateTime',
 				default: '',
-				description: 'The birth date of the contact.',
+				description: 'The birth date of the contact',
 			},
 			{
 				displayName: 'Custom Fields',
@@ -487,7 +518,7 @@ export const contactFields = [
 				typeOptions: {
 					multipleValues: true,
 				},
-				description: 'Filter by custom fields ',
+				description: 'Filter by custom fields',
 				default: {},
 				options: [
 					{
@@ -495,21 +526,22 @@ export const contactFields = [
 						displayName: 'Custom Field',
 						values: [
 							{
-								displayName: 'Field ID',
+								displayName: 'Field Name or ID',
 								name: 'fieldId',
 								type: 'options',
 								typeOptions: {
 									loadOptionsMethod: 'getCustomFields',
 								},
 								default: '',
-								description: 'The ID of the field to add custom field to.',
+								description:
+									'The ID of the field to add custom field to. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 							},
 							{
 								displayName: 'Value',
 								name: 'value',
 								type: 'string',
 								default: '',
-								description: 'The value to set on custom field.',
+								description: 'The value to set on custom field',
 							},
 						],
 					},
@@ -520,7 +552,7 @@ export const contactFields = [
 				name: 'department',
 				type: 'string',
 				default: '',
-				description: 'The department of the contact.',
+				description: 'The department of the contact',
 			},
 			{
 				displayName: 'Description',
@@ -533,22 +565,32 @@ export const contactFields = [
 				displayName: 'Email',
 				name: 'email',
 				type: 'string',
+				placeholder: 'name@email.com',
 				default: '',
-				description: 'Email address for the contact.',
+				description: 'Email address for the contact',
 			},
 			{
 				displayName: 'Email Bounced Date',
 				name: 'emailBouncedDate',
 				type: 'dateTime',
 				default: '',
-				description: 'If bounce management is activated and an email sent to the contact bounces, the date and time the bounce occurred.',
+				description:
+					'If bounce management is activated and an email sent to the contact bounces, the date and time the bounce occurred',
 			},
 			{
 				displayName: 'Email Bounced Reason',
 				name: 'emailBouncedReason',
 				type: 'string',
 				default: '',
-				description: 'If bounce management is activated and an email sent to the contact bounces, the reason the bounce occurred.',
+				description:
+					'If bounce management is activated and an email sent to the contact bounces, the reason the bounce occurred',
+			},
+			{
+				displayName: 'Email Opt Out',
+				name: 'hasOptedOutOfEmail',
+				type: 'boolean',
+				default: false,
+				description: 'Whether the contact does not want to receive email from Salesforce',
 			},
 			{
 				displayName: 'Fax',
@@ -565,19 +607,33 @@ export const contactFields = [
 				description: 'First name of the contact. Maximum size is 40 characters.',
 			},
 			{
+				displayName: 'Middle Name',
+				name: 'middleName',
+				type: 'string',
+				default: '',
+				description: 'Middle name of the contact. Maximum size is 40 characters.',
+			},
+			{
+				displayName: 'Suffix',
+				name: 'suffix',
+				type: 'string',
+				default: '',
+				description: 'Name suffix of the contact. Maximum size is 40 characters.',
+			},
+			{
 				displayName: 'Home Phone',
 				name: 'homePhone',
 				type: 'string',
 				default: '',
-				description: 'Home telephone number for the contact.',
+				description: 'Home telephone number for the contact',
 			},
 			{
 				displayName: 'Jigsaw',
 				name: 'jigsaw',
 				type: 'string',
 				default: '',
-				description: `references the ID of a contact in Data.com.
-				If a contact has a value in this field, it means that a contact was imported as a contact from Data.com.`,
+				description:
+					'References the ID of a contact in Data.com. If a contact has a value in this field, it means that a contact was imported as a contact from Data.com.',
 			},
 			{
 				displayName: 'Last Name',
@@ -587,14 +643,15 @@ export const contactFields = [
 				description: 'Last name of the contact. Limited to 80 characters.',
 			},
 			{
-				displayName: 'Lead Source',
+				displayName: 'Lead Source Name or ID',
 				name: 'leadSource',
 				type: 'options',
 				typeOptions: {
 					loadOptionsMethod: 'getLeadSources',
 				},
 				default: '',
-				description: 'Source from which the lead was obtained.',
+				description:
+					'Source from which the lead was obtained. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Mailing City',
@@ -619,7 +676,7 @@ export const contactFields = [
 				name: 'mailingStreet',
 				type: 'string',
 				default: '',
-				description: 'Street address for mailing address.',
+				description: 'Street address for mailing address',
 			},
 			{
 				displayName: 'Mailing Postal Code',
@@ -632,7 +689,7 @@ export const contactFields = [
 				name: 'mobilePhone',
 				type: 'string',
 				default: '',
-				description: `Contact’s mobile phone number.`,
+				description: 'Contact’s mobile phone number',
 			},
 			{
 				displayName: 'Other City',
@@ -651,7 +708,7 @@ export const contactFields = [
 				name: 'otherPhone',
 				type: 'string',
 				default: '',
-				description: 'Telephone for alternate address.',
+				description: 'Telephone for alternate address',
 			},
 			{
 				displayName: 'Other Postal Code',
@@ -670,29 +727,55 @@ export const contactFields = [
 				name: 'otherStreet',
 				type: 'string',
 				default: '',
-				description: 'Street for alternate address.',
+				description: 'Street for alternate address',
 			},
 			{
 				displayName: 'Owner',
 				name: 'owner',
-				type: 'options',
-				typeOptions: {
-					loadOptionsMethod: 'getUsers',
-				},
-				default: '',
-				description: 'The owner of the contact.',
+				type: 'resourceLocator',
+				default: { mode: 'list', value: '' },
+				modes: [
+					{
+						displayName: 'From List',
+						name: 'list',
+						type: 'list',
+						placeholder: 'Select a user...',
+						typeOptions: {
+							searchListMethod: 'searchUsers',
+							searchable: true,
+						},
+					},
+					{
+						displayName: 'By ID',
+						name: 'id',
+						type: 'string',
+						placeholder: '0051700000ABCDE',
+						validation: [
+							{
+								type: 'regex',
+								properties: {
+									regex: '^(?:[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18})$',
+									errorMessage: 'User ID must be 15 or 18 alphanumeric characters',
+								},
+							},
+						],
+					},
+				],
+				description: 'The user who owns the contact',
 			},
 			{
 				displayName: 'Phone',
 				name: 'phone',
 				type: 'string',
 				default: '',
-				description: 'Phone number for the contact.',
+				description: 'Phone number for the contact',
 			},
 			{
-				displayName: 'Record Type ID',
+				displayName: 'Record Type Name or ID',
 				name: 'recordTypeId',
 				type: 'options',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'getRecordTypes',
 				},
@@ -703,14 +786,29 @@ export const contactFields = [
 				name: 'salutation',
 				type: 'string',
 				default: '',
-				description: 'Honorific abbreviation, word, or phrase to be used in front of name in greetings, such as Dr. or Mrs.',
+				description:
+					'Honorific abbreviation, word, or phrase to be used in front of name in greetings, such as Dr. or Mrs.',
+			},
+			{
+				displayName: 'Pronouns',
+				name: 'pronouns',
+				type: 'string',
+				default: '',
+				description: "The contact's personal pronouns",
+			},
+			{
+				displayName: 'Gender Identity',
+				name: 'genderIdentity',
+				type: 'string',
+				default: '',
+				description: "The contact's gender identity",
 			},
 			{
 				displayName: 'Title',
 				name: 'title',
 				type: 'string',
 				default: '',
-				description: 'Title of the contact such as CEO or Vice President.',
+				description: 'Title of the contact such as CEO or Vice President',
 			},
 		],
 	},
@@ -726,15 +824,11 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'get',
-				],
+				resource: ['contact'],
+				operation: ['get'],
 			},
 		},
-		description: 'ID of contact that needs to be fetched.',
+		description: 'ID of contact that needs to be fetched',
 	},
 
 	/* -------------------------------------------------------------------------- */
@@ -748,12 +842,8 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'delete',
-				],
+				resource: ['contact'],
+				operation: ['delete'],
 			},
 		},
 		description: 'ID of contact that needs to be fetched',
@@ -768,16 +858,12 @@ export const contactFields = [
 		type: 'boolean',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'getAll',
-				],
+				resource: ['contact'],
+				operation: ['getAll'],
 			},
 		},
 		default: false,
-		description: 'If all results should be returned or only up to a given limit.',
+		description: 'Whether to return all results or only up to a given limit',
 	},
 	{
 		displayName: 'Limit',
@@ -785,15 +871,9 @@ export const contactFields = [
 		type: 'number',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'getAll',
-				],
-				returnAll: [
-					false,
-				],
+				resource: ['contact'],
+				operation: ['getAll'],
+				returnAll: [false],
 			},
 		},
 		typeOptions: {
@@ -801,7 +881,7 @@ export const contactFields = [
 			maxValue: 100,
 		},
 		default: 50,
-		description: 'How many results to return.',
+		description: 'Max number of results to return',
 	},
 	{
 		displayName: 'Options',
@@ -811,12 +891,8 @@ export const contactFields = [
 		default: {},
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'getAll',
-				],
+				resource: ['contact'],
+				operation: ['getAll'],
 			},
 		},
 		options: [
@@ -828,7 +904,7 @@ export const contactFields = [
 				typeOptions: {
 					multipleValues: true,
 				},
-				description: 'The condition to set.',
+				description: 'The condition to set',
 				default: {},
 				options: [
 					{
@@ -836,20 +912,30 @@ export const contactFields = [
 						displayName: 'Condition',
 						values: [
 							{
-								displayName: 'Field',
+								displayName: 'Field Name or ID',
 								name: 'field',
 								type: 'options',
 								typeOptions: {
 									loadOptionsMethod: 'getContactFields',
 								},
 								default: '',
-								description: 'For date, number, or boolean, please use expressions.',
+								description:
+									'For date, number, or boolean, please use expressions. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 							},
+							// eslint-disable-next-line n8n-nodes-base/node-param-operation-without-no-data-expression
 							{
 								displayName: 'Operation',
 								name: 'operation',
 								type: 'options',
 								options: [
+									{
+										name: '<',
+										value: '<',
+									},
+									{
+										name: '<=',
+										value: '<=',
+									},
 									{
 										name: '=',
 										value: 'equal',
@@ -859,16 +945,8 @@ export const contactFields = [
 										value: '>',
 									},
 									{
-										name: '<',
-										value: '<',
-									},
-									{
 										name: '>=',
 										value: '>=',
-									},
-									{
-										name: '<=',
-										value: '<=',
 									},
 								],
 								default: 'equal',
@@ -904,18 +982,14 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addToCampaign',
-				],
+				resource: ['contact'],
+				operation: ['addToCampaign'],
 			},
 		},
-		description: 'ID of contact that needs to be fetched.',
+		description: 'ID of contact that needs to be fetched',
 	},
 	{
-		displayName: 'Campaign',
+		displayName: 'Campaign Name or ID',
 		name: 'campaignId',
 		type: 'options',
 		typeOptions: {
@@ -925,15 +999,12 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addToCampaign',
-				],
+				resource: ['contact'],
+				operation: ['addToCampaign'],
 			},
 		},
-		description: 'ID of the campaign that needs to be fetched.',
+		description:
+			'ID of the campaign that needs to be fetched. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 	},
 	{
 		displayName: 'Options',
@@ -943,12 +1014,8 @@ export const contactFields = [
 		default: {},
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addToCampaign',
-				],
+				resource: ['contact'],
+				operation: ['addToCampaign'],
 			},
 		},
 		options: [
@@ -957,7 +1024,7 @@ export const contactFields = [
 				name: 'status',
 				type: 'string',
 				default: '',
-				description: 'Controls the HasResponded flag on this object.',
+				description: 'Controls the HasResponded flag on this object',
 			},
 		],
 	},
@@ -973,15 +1040,11 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addNote',
-				],
+				resource: ['contact'],
+				operation: ['addNote'],
 			},
 		},
-		description: 'ID of contact that needs to be fetched.',
+		description: 'ID of contact that needs to be fetched',
 	},
 	{
 		displayName: 'Title',
@@ -991,15 +1054,11 @@ export const contactFields = [
 		default: '',
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addNote',
-				],
+				resource: ['contact'],
+				operation: ['addNote'],
 			},
 		},
-		description: 'Title of the note.',
+		description: 'Title of the note',
 	},
 	{
 		displayName: 'Options',
@@ -1009,12 +1068,8 @@ export const contactFields = [
 		default: {},
 		displayOptions: {
 			show: {
-				resource: [
-					'contact',
-				],
-				operation: [
-					'addNote',
-				],
+				resource: ['contact'],
+				operation: ['addNote'],
 			},
 		},
 		options: [
@@ -1023,9 +1078,6 @@ export const contactFields = [
 				name: 'body',
 				type: 'string',
 				default: '',
-				typeOptions: {
-					alwaysOpenEditWindow: true,
-				},
 				description: 'Body of the note. Limited to 32 KB.',
 			},
 			{
@@ -1033,18 +1085,43 @@ export const contactFields = [
 				name: 'isPrivate',
 				type: 'boolean',
 				default: false,
-				description: 'If true, only the note owner or a user with the “Modify All Data” permission can view the note or query it via the API',
+				description:
+					'Whether only the note owner or a user with the “Modify All Data” permission can view the note or query it via the API',
 			},
 			{
 				displayName: 'Owner',
 				name: 'owner',
-				type: 'options',
-				typeOptions: {
-					loadOptionsMethod: 'getUsers',
-				},
-				default: '',
-				description: 'ID of the user who owns the note.',
+				type: 'resourceLocator',
+				default: { mode: 'list', value: '' },
+				modes: [
+					{
+						displayName: 'From List',
+						name: 'list',
+						type: 'list',
+						placeholder: 'Select a user...',
+						typeOptions: {
+							searchListMethod: 'searchUsers',
+							searchable: true,
+						},
+					},
+					{
+						displayName: 'By ID',
+						name: 'id',
+						type: 'string',
+						placeholder: '0051700000ABCDE',
+						validation: [
+							{
+								type: 'regex',
+								properties: {
+									regex: '^(?:[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18})$',
+									errorMessage: 'User ID must be 15 or 18 alphanumeric characters',
+								},
+							},
+						],
+					},
+				],
+				description: 'The user who owns the note',
 			},
 		],
 	},
-] as INodeProperties[];
+];

@@ -1,33 +1,24 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
-	NodeApiError,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { requestUrl } from 'n8n-workflow';
 
 export async function urlScanIoApiRequest(
 	this: IExecuteFunctions,
 	method: 'GET' | 'POST',
-	endpoint: string,
+	endpoint: RequestPath,
 	body: IDataObject = {},
 	qs: IDataObject = {},
 ) {
-	const { apiKey } = await this.getCredentials('urlScanIoApi') as { apiKey: string };
-
-	const options: OptionsWithUri = {
-		headers: {
-			'API-KEY': apiKey,
-		},
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		body,
 		qs,
-		uri: `https://urlscan.io/api/v1${endpoint}`,
+		uri: requestUrl`https://urlscan.io/api/v1${endpoint}`,
 		json: true,
 	};
 
@@ -39,17 +30,12 @@ export async function urlScanIoApiRequest(
 		delete options.qs;
 	}
 
-	try {
-		return await this.helpers.request(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+	return await this.helpers.requestWithAuthentication.call(this, 'urlScanIoApi', options);
 }
-
 
 export async function handleListing(
 	this: IExecuteFunctions,
-	endpoint: string,
+	endpoint: RequestPath,
 	qs: IDataObject = {},
 ): Promise<IDataObject[]> {
 	const returnData: IDataObject[] = [];
@@ -57,29 +43,28 @@ export async function handleListing(
 
 	qs.size = 100;
 
-	const returnAll = this.getNodeParameter('returnAll', 0, false) as boolean;
-	const limit = this.getNodeParameter('limit', 0, 0) as number;
+	const returnAll = this.getNodeParameter('returnAll', 0, false);
+	const limit = this.getNodeParameter('limit', 0, 0);
 
 	do {
 		responseData = await urlScanIoApiRequest.call(this, 'GET', endpoint, {}, qs);
-		returnData.push(...responseData.results);
+		returnData.push(...(responseData.results as IDataObject[]));
 
 		if (!returnAll && returnData.length > limit) {
 			return returnData.slice(0, limit);
 		}
 
 		if (responseData.results.length) {
-			const lastResult = responseData.results[responseData.results.length -1];
+			const lastResult = responseData.results[responseData.results.length - 1];
 			qs.search_after = lastResult.sort;
 		}
-
 	} while (responseData.total > returnData.length);
 
 	return returnData;
 }
 
 export const normalizeId = ({ _id, uuid, ...rest }: IDataObject) => {
-	if (_id) return ({ scanId: _id, ...rest });
-	if (uuid) return ({ scanId: uuid, ...rest });
+	if (_id) return { scanId: _id, ...rest };
+	if (uuid) return { scanId: uuid, ...rest };
 	return rest;
 };

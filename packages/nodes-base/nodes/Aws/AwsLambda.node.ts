@@ -1,16 +1,17 @@
-import { IExecuteFunctions } from 'n8n-core';
-import {
+import type {
+	IExecuteFunctions,
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
-	NodeApiError,
-	NodeOperationError,
+	JsonObject,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeApiError, decodePathValue, requestPath } from 'n8n-workflow';
 
 import { awsApiRequestREST } from './GenericFunctions';
+import { awsNodeAuthOptions, awsNodeCredentials } from './utils';
 
 export class AwsLambda implements INodeType {
 	description: INodeTypeDescription = {
@@ -18,38 +19,36 @@ export class AwsLambda implements INodeType {
 		name: 'awsLambda',
 		icon: 'file:lambda.svg',
 		group: ['output'],
-		version: 1,
+		version: [1, 1.1],
+		defaultVersion: 1.1,
 		subtitle: '={{$parameter["function"]}}',
 		description: 'Invoke functions on AWS Lambda',
 		defaults: {
 			name: 'AWS Lambda',
-			color: '#FF9900',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
-		credentials: [
-			{
-				name: 'aws',
-				required: true,
-			},
-		],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
+		credentials: awsNodeCredentials,
 		properties: [
+			awsNodeAuthOptions,
 			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Invoke',
 						value: 'invoke',
 						description: 'Invoke a function',
+						action: 'Invoke a function',
 					},
 				],
 				default: 'invoke',
-				description: 'The operation to perform.',
 			},
 			{
-				displayName: 'Function',
+				displayName: 'Function Name or ID',
 				name: 'function',
 				type: 'options',
 				typeOptions: {
@@ -57,15 +56,14 @@ export class AwsLambda implements INodeType {
 				},
 				displayOptions: {
 					show: {
-						operation: [
-							'invoke',
-						],
+						operation: ['invoke'],
 					},
 				},
 				options: [],
 				default: '',
 				required: true,
-				description: 'The function you want to invoke',
+				description:
+					'The function you want to invoke. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Qualifier',
@@ -73,9 +71,7 @@ export class AwsLambda implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						operation: [
-							'invoke',
-						],
+						operation: ['invoke'],
 					},
 				},
 				required: true,
@@ -88,21 +84,19 @@ export class AwsLambda implements INodeType {
 				type: 'options',
 				options: [
 					{
-						name: 'Wait for results',
+						name: 'Wait for Results',
 						value: 'RequestResponse',
 						description: 'Invoke the function synchronously and wait for the response',
 					},
 					{
-						name: 'Continue workflow',
+						name: 'Continue Workflow',
 						value: 'Event',
 						description: 'Invoke the function and immediately continue the workflow',
 					},
 				],
 				displayOptions: {
 					show: {
-						operation: [
-							'invoke',
-						],
+						operation: ['invoke'],
 					},
 				},
 				default: 'RequestResponse',
@@ -114,16 +108,11 @@ export class AwsLambda implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						operation: [
-							'invoke',
-						],
+						operation: ['invoke'],
 					},
 				},
 				default: '',
 				description: 'The JSON that you want to provide to your Lambda function as input',
-				typeOptions: {
-					alwaysOpenEditWindow: true,
-				},
 			},
 		],
 	};
@@ -132,7 +121,12 @@ export class AwsLambda implements INodeType {
 		loadOptions: {
 			async getFunctions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const data = await awsApiRequestREST.call(this, 'lambda', 'GET', '/2015-03-31/functions/');
+				const data = await awsApiRequestREST.call(
+					this,
+					'lambda',
+					'GET',
+					requestPath`/2015-03-31/functions/`,
+				);
 
 				for (const func of data.Functions!) {
 					returnData.push({
@@ -144,7 +138,15 @@ export class AwsLambda implements INodeType {
 				if (data.NextMarker) {
 					let marker: string = data.NextMarker;
 					while (true) {
-						const dataLoop = await awsApiRequestREST.call(this, 'lambda', 'GET', `/2015-03-31/functions/?MaxItems=50&Marker=${encodeURIComponent(marker)}`);
+						const dataLoop = await awsApiRequestREST.call(
+							this,
+							'lambda',
+							'GET',
+							requestPath`/2015-03-31/functions/`,
+							undefined,
+							undefined,
+							{ MaxItems: 50, Marker: marker },
+						);
 
 						for (const func of dataLoop.Functions!) {
 							returnData.push({
@@ -166,15 +168,16 @@ export class AwsLambda implements INodeType {
 		},
 	};
 
-
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 		const returnData: IDataObject[] = [];
+		const version = this.getNode().typeVersion;
 
 		for (let i = 0; i < items.length; i++) {
 			try {
+				const functionName = this.getNodeParameter('function', i) as string;
 				const params = {
-					FunctionName: this.getNodeParameter('function', i) as string,
+					FunctionName: version < 1.1 ? decodePathValue(functionName) : functionName,
 					InvocationType: this.getNodeParameter('invocationType', i) as string,
 					Payload: this.getNodeParameter('payload', i) as string,
 					Qualifier: this.getNodeParameter('qualifier', i) as string,
@@ -184,30 +187,39 @@ export class AwsLambda implements INodeType {
 					this,
 					'lambda',
 					'POST',
-					`/2015-03-31/functions/${params.FunctionName}/invocations?Qualifier=${params.Qualifier}`,
+					requestPath`/2015-03-31/functions/${params.FunctionName}/invocations`,
 					params.Payload,
 					{
 						'X-Amz-Invocation-Type': params.InvocationType,
 						'Content-Type': 'application/x-amz-json-1.0',
 					},
+					{ Qualifier: params.Qualifier },
 				);
 
-				if (responseData !== null && responseData.errorMessage !== undefined) {
-					let errorMessage = responseData.errorMessage;
+				if (responseData?.errorMessage !== undefined) {
+					let _errorMessage = responseData.errorMessage;
 
 					if (responseData.stackTrace) {
-						errorMessage += `\n\nStack trace:\n${responseData.stackTrace}`;
+						_errorMessage += `\n\nStack trace:\n${responseData.stackTrace}`;
 					}
 
-					throw new NodeApiError(this.getNode(), responseData);
+					throw new NodeApiError(this.getNode(), responseData as JsonObject);
 				} else {
-					returnData.push({
-						result: responseData,
-					} as IDataObject);
+					const executionData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({
+							result: responseData,
+						}),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionData);
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const executionData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: (error as JsonObject).message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionData);
 					continue;
 				}
 				throw error;

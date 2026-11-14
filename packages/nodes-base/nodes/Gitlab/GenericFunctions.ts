@@ -1,71 +1,66 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
-	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
-import { OptionsWithUri } from 'request';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 /**
  * Make an API request to Gitlab
  *
- * @param {IHookFunctions} this
- * @param {string} method
- * @param {string} url
- * @param {object} body
- * @returns {Promise<any>}
  */
-export async function gitlabApiRequest(this: IHookFunctions | IExecuteFunctions, method: string, endpoint: string, body: object, query?: object, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-	const options: OptionsWithUri = {
-		method,
-		headers: {},
-		body,
-		qs: query,
-		uri: '',
-		json: true,
-	};
-
-	if (Object.keys(option).length !== 0) {
-		Object.assign(options, option);
-	}
-	if (query === undefined) {
-		delete options.qs;
-	}
-
+export async function gitlabApiRequest(
+	this: IHookFunctions | IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: object,
+	query?: IDataObject,
+	option: Pick<IRequestOptions, 'resolveWithFullResponse'> = {},
+): Promise<any> {
 	const authenticationMethod = this.getNodeParameter('authentication', 0);
+	const credentialType = authenticationMethod === 'accessToken' ? 'gitlabApi' : 'gitlabOAuth2Api';
 
 	try {
+		const credentials = await this.getCredentials(credentialType);
+		const options: WithRequestTarget<IRequestOptions, 'uri'> = {
+			method,
+			headers: {},
+			body,
+			qs: query,
+			uri: requestUrl`${credentials.server}/api/v4${endpoint}`,
+			json: true,
+		};
+
+		if (Object.keys(option).length !== 0) {
+			Object.assign(options, option);
+		}
+		if (query === undefined) {
+			delete options.qs;
+		}
+
 		if (authenticationMethod === 'accessToken') {
-			const credentials = await this.getCredentials('gitlabApi');
-			if (credentials === undefined) {
-				throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-			}
-
-			options.headers!['Private-Token'] = `${credentials.accessToken}`;
-
-			options.uri = `${(credentials.server as string).replace(/\/$/, '')}/api/v4${endpoint}`;
-
-			return await this.helpers.request(options);
+			return await this.helpers.requestWithAuthentication.call(this, 'gitlabApi', options);
 		} else {
-			const credentials = await this.getCredentials('gitlabOAuth2Api');
-			if (credentials === undefined) {
-				throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-			}
-
-			options.uri = `${(credentials.server as string).replace(/\/$/, '')}/api/v4${endpoint}`;
-
-			return await this.helpers.requestOAuth2!.call(this, 'gitlabOAuth2Api', options);
+			return await this.helpers.requestOAuth2.call(this, 'gitlabOAuth2Api', options);
 		}
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function gitlabApiRequestAllItems(this: IHookFunctions | IExecuteFunctions, method: string, endpoint: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function gitlabApiRequestAllItems(
+	this: IHookFunctions | IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -74,11 +69,11 @@ export async function gitlabApiRequestAllItems(this: IHookFunctions | IExecuteFu
 	query.page = 1;
 
 	do {
-		responseData = await gitlabApiRequest.call(this, method, endpoint, body, query, { resolveWithFullResponse: true });
+		responseData = await gitlabApiRequest.call(this, method, endpoint, body as IDataObject, query, {
+			resolveWithFullResponse: true,
+		});
 		query.page++;
-		returnData.push.apply(returnData, responseData.body);
-	} while (
-		responseData.headers.link && responseData.headers.link.includes('next')
-	);
+		returnData.push.apply(returnData, responseData.body as IDataObject[]);
+	} while (responseData.headers.link?.includes('next'));
 	return returnData;
 }

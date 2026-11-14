@@ -1,21 +1,30 @@
-import {
+import type {
+	ICredentialDataDecryptedObject,
 	ICredentialType,
+	IHttpRequestOptions,
 	INodeProperties,
 } from 'n8n-workflow';
 
+import type { AWSRegion } from './common/aws/regions';
+import type { AwsIamCredentialsType } from './common/aws/types';
+import {
+	awsCredentialsTest,
+	awsGetSignInOptionsAndUpdateRequest,
+	signOptions,
+} from './common/aws/utils';
+import { awsCustomEndpoints, awsRegionProperty } from './common/aws/descriptions';
 
 export class Aws implements ICredentialType {
 	name = 'aws';
-	displayName = 'AWS';
+
+	displayName = 'AWS (IAM)';
+
 	documentationUrl = 'aws';
-	icon = 'file:AWS.svg';
+
+	icon = { light: 'file:icons/AWS.svg', dark: 'file:icons/AWS.dark.svg' } as const;
+
 	properties: INodeProperties[] = [
-		{
-			displayName: 'Region',
-			name: 'region',
-			type: 'string',
-			default: 'us-east-1',
-		},
+		awsRegionProperty,
 		{
 			displayName: 'Access Key ID',
 			name: 'accessKeyId',
@@ -32,100 +41,63 @@ export class Aws implements ICredentialType {
 			},
 		},
 		{
-			displayName: 'Custom Endpoints',
-			name: 'customEndpoints',
+			displayName: 'Temporary Security Credentials',
+			name: 'temporaryCredentials',
+			description: 'Support for temporary credentials from AWS STS',
 			type: 'boolean',
 			default: false,
 		},
 		{
-			displayName: 'Rekognition Endpoint',
-			name: 'rekognitionEndpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and Rekognition using a VPC endpoint. Leave blank to use the default endpoint.',
+			displayName: 'Session Token',
+			name: 'sessionToken',
 			type: 'string',
 			displayOptions: {
 				show: {
-					customEndpoints: [
-						true,
-					],
+					temporaryCredentials: [true],
 				},
 			},
 			default: '',
-			placeholder: 'https://rekognition.{region}.amazonaws.com',
-		},
-		{
-			displayName: 'Lambda Endpoint',
-			name: 'lambdaEndpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and Lambda using a VPC endpoint. Leave blank to use the default endpoint.',
-			type: 'string',
-			displayOptions: {
-				show: {
-					customEndpoints: [
-						true,
-					],
-				},
+			typeOptions: {
+				password: true,
 			},
-			default: '',
-			placeholder: 'https://lambda.{region}.amazonaws.com',
 		},
-		{
-			displayName: 'SNS Endpoint',
-			name: 'snsEndpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and SNS using a VPC endpoint. Leave blank to use the default endpoint.',
-			type: 'string',
-			displayOptions: {
-				show: {
-					customEndpoints: [
-						true,
-					],
-				},
-			},
-			default: '',
-			placeholder: 'https://sns.{region}.amazonaws.com',
-		},
-		{
-			displayName: 'SES Endpoint',
-			name: 'sesEndpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and SES using a VPC endpoint. Leave blank to use the default endpoint.',
-			type: 'string',
-			displayOptions: {
-				show: {
-					customEndpoints: [
-						true,
-					],
-				},
-			},
-			default: '',
-			placeholder: 'https://email.{region}.amazonaws.com',
-		},
-		{
-			displayName: 'SQS Endpoint',
-			name: 'sqsEndpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and SQS using a VPC endpoint. Leave blank to use the default endpoint.',
-			type: 'string',
-			displayOptions: {
-				show: {
-					customEndpoints: [
-						true,
-					],
-				},
-			},
-			default: '',
-			placeholder: 'https://sqs.{region}.amazonaws.com',
-		},
-		{
-			displayName: 'S3 Endpoint',
-			name: 's3Endpoint',
-			description: 'If you use Amazon VPC to host n8n, you can establish a connection between your VPC and S3 using a VPC endpoint. Leave blank to use the default endpoint.',
-			type: 'string',
-			displayOptions: {
-				show: {
-					customEndpoints: [
-						true,
-					],
-				},
-			},
-			default: '',
-			placeholder: 'https://s3.{region}.amazonaws.com',
-		},
+		...awsCustomEndpoints,
 	];
+
+	async authenticate(
+		rawCredentials: ICredentialDataDecryptedObject,
+		requestOptions: IHttpRequestOptions,
+	): Promise<IHttpRequestOptions> {
+		const credentials = rawCredentials as AwsIamCredentialsType;
+		const service = requestOptions.qs?.service as string;
+		const path = (requestOptions.qs?.path as string) ?? '';
+		const method = requestOptions.method;
+
+		let region = credentials.region;
+		if (requestOptions.qs?._region) {
+			region = requestOptions.qs._region as AWSRegion;
+			delete requestOptions.qs._region;
+		}
+
+		const { signOpts, url } = awsGetSignInOptionsAndUpdateRequest(
+			requestOptions,
+			credentials,
+			path,
+			method,
+			service,
+			region,
+		);
+
+		const securityHeaders = {
+			accessKeyId: `${credentials.accessKeyId}`.trim(),
+			secretAccessKey: `${credentials.secretAccessKey}`.trim(),
+			sessionToken: credentials.temporaryCredentials
+				? `${credentials.sessionToken}`.trim()
+				: undefined,
+		};
+
+		return await signOptions(requestOptions, signOpts, securityHeaders, url, method);
+	}
+
+	test = awsCredentialsTest;
 }

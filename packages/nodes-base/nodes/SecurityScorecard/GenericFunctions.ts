@@ -1,31 +1,62 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function scorecardApiRequest(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, query: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-	const credentials = await this.getCredentials('securityScorecardApi');
+export const SECURITY_SCORECARD_API_BASE_URL = 'https://api.securityscorecard.io';
+const SECURITY_SCORECARD_REPORT_FILES_PATH = '/reports/files/';
+const URL_PROTOCOL_PATTERN = /^[a-z][a-z\d+\-.]*:/i;
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
+export function resolveReportDownloadUrl(reportUrlOrPath: string): string {
+	const trimmed = reportUrlOrPath.trim();
+
+	if (!trimmed) {
+		throw new Error('Report URL is required');
 	}
+
+	const reportFilePath = trimmed.replace(/^\/+/, '').replace(/^reports\/files\/?/, '');
+	const resolvedUrl = new URL(
+		URL_PROTOCOL_PATTERN.test(trimmed) ? trimmed : reportFilePath,
+		`${SECURITY_SCORECARD_API_BASE_URL}${SECURITY_SCORECARD_REPORT_FILES_PATH}`,
+	);
+
+	if (
+		resolvedUrl.origin !== SECURITY_SCORECARD_API_BASE_URL ||
+		!resolvedUrl.pathname.startsWith(SECURITY_SCORECARD_REPORT_FILES_PATH)
+	) {
+		throw new Error('Report URL must point to SecurityScorecard report files');
+	}
+
+	return resolvedUrl.toString();
+}
+
+export async function scorecardApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+
+	body: any = {},
+	query: IDataObject = {},
+	uri?: string,
+	option: Pick<IRequestOptions, 'encoding' | 'resolveWithFullResponse'> = {},
+): Promise<any> {
+	const credentials = await this.getCredentials('securityScorecardApi');
 
 	const headerWithAuthentication = { Authorization: `Token ${credentials.apiKey}` };
 
-	let options: OptionsWithUri = {
+	let options: IRequestOptions | WithRequestTarget<IRequestOptions, 'uri'> = {
 		headers: headerWithAuthentication,
 		method,
 		qs: query,
-		uri: uri || `https://api.securityscorecard.io/${resource}`,
+		...(uri ? { uri } : { uri: requestUrl`https://api.securityscorecard.io/${resource}` }),
 		body,
 		json: true,
 	};
@@ -34,7 +65,7 @@ export async function scorecardApiRequest(this: IHookFunctions | IExecuteFunctio
 		options = Object.assign({}, options, option);
 	}
 
-	if (Object.keys(body).length === 0) {
+	if (Object.keys(body as IDataObject).length === 0) {
 		delete options.body;
 	}
 
@@ -42,9 +73,9 @@ export async function scorecardApiRequest(this: IHookFunctions | IExecuteFunctio
 		delete options.qs;
 	}
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 

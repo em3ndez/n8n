@@ -1,47 +1,39 @@
-import {
+import type {
 	IHookFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookResponseData,
-	NodeApiError,
-	NodeOperationError,
+	JsonObject,
 } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	getresponseApiRequest,
-	getResponseApiRequestAllItems,
-} from './GenericFunctions';
+import { getresponseApiRequest, getResponseApiRequestAllItems } from './GenericFunctions';
 
 export class GetResponseTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'GetResponse Trigger',
 		name: 'getResponseTrigger',
+		// eslint-disable-next-line n8n-nodes-base/node-class-description-icon-not-svg
 		icon: 'file:getResponse.png',
 		group: ['trigger'],
 		version: 1,
 		description: 'Starts the workflow when GetResponse events occur',
 		defaults: {
 			name: 'GetResponse Trigger',
-			color: '#00afec',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'getResponseApi',
 				required: true,
 				displayOptions: {
 					show: {
-						authentication: [
-							'apiKey',
-						],
+						authentication: ['apiKey'],
 					},
 				},
 			},
@@ -50,9 +42,7 @@ export class GetResponseTrigger implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						authentication: [
-							'oAuth2',
-						],
+						authentication: ['oAuth2'],
 					},
 				},
 			},
@@ -81,7 +71,6 @@ export class GetResponseTrigger implements INodeType {
 					},
 				],
 				default: 'apiKey',
-				description: 'The resource to operate on.',
 			},
 			{
 				displayName: 'Events',
@@ -91,36 +80,38 @@ export class GetResponseTrigger implements INodeType {
 					{
 						name: 'Customer Subscribed',
 						value: 'subscribe',
-						description: 'Receive notifications when a customer is subscribed to a list.',
+						description: 'Receive notifications when a customer is subscribed to a list',
 					},
 					{
 						name: 'Customer Unsubscribed',
 						value: 'unsubscribe',
-						description: 'Receive notifications when a customer is unsubscribed from a list.',
-					},
-					{
-						name: 'Email Opened',
-						value: 'open',
-						description: 'Receive notifications when a email is opened.',
+						description: 'Receive notifications when a customer is unsubscribed from a list',
 					},
 					{
 						name: 'Email Clicked',
 						value: 'click',
-						description: 'Receive notifications when a email is clicked.',
+						description: 'Receive notifications when a email is clicked',
+					},
+					{
+						name: 'Email Opened',
+						value: 'open',
+						description: 'Receive notifications when a email is opened',
 					},
 					{
 						name: 'Survey Submitted',
 						value: 'survey',
-						description: 'Receive notifications when a survey is submitted.',
+						description: 'Receive notifications when a survey is submitted',
 					},
 				],
 				default: [],
 				required: true,
 			},
 			{
-				displayName: 'List IDs',
+				displayName: 'List Names or IDs',
 				name: 'listIds',
 				type: 'multiOptions',
+				description:
+					'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'getLists',
 				},
@@ -129,7 +120,7 @@ export class GetResponseTrigger implements INodeType {
 			{
 				displayName: 'Options',
 				name: 'options',
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				type: 'collection',
 				default: {},
 				options: [
@@ -138,7 +129,7 @@ export class GetResponseTrigger implements INodeType {
 						name: 'delete',
 						type: 'boolean',
 						default: false,
-						description: 'Delete the current subscription.',
+						description: 'Whether to delete the current subscription',
 					},
 				],
 			},
@@ -147,11 +138,15 @@ export class GetResponseTrigger implements INodeType {
 
 	methods = {
 		loadOptions: {
-			// Get all the available teams to display them to user so that he can
+			// Get all the available teams to display them to user so that they can
 			// select them easily
 			async getLists(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const lists = await getResponseApiRequestAllItems.call(this, 'GET', '/campaigns');
+				const lists = await getResponseApiRequestAllItems.call(
+					this,
+					'GET',
+					requestPath`/campaigns`,
+				);
 				returnData.push({ name: '*', value: '*' });
 				for (const list of lists) {
 					returnData.push({
@@ -164,7 +159,6 @@ export class GetResponseTrigger implements INodeType {
 		},
 	};
 
-	// @ts-ignore (because of request)
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -172,11 +166,18 @@ export class GetResponseTrigger implements INodeType {
 				const deleteCurrentSubscription = this.getNodeParameter('options.delete', false) as boolean;
 
 				try {
-					const data = await getresponseApiRequest.call(this, 'GET', '/accounts/callbacks', {});
+					const data = await getresponseApiRequest.call(
+						this,
+						'GET',
+						requestPath`/accounts/callbacks`,
+						{},
+					);
 
 					if (data.url !== webhookUrl) {
-						if (deleteCurrentSubscription === false) {
-							throw new NodeApiError(this.getNode(), data, { message: `The webhook (${data.url}) is active in the account. Delete it manually or set the parameter "Delete Current Subscription" to true, and the node will delete it for you.` });
+						if (!deleteCurrentSubscription) {
+							throw new NodeApiError(this.getNode(), data as JsonObject, {
+								message: `The webhook (${data.url}) is active in the account. Delete it manually or set the parameter "Delete Current Subscription" to true, and the node will delete it for you.`,
+							});
 						}
 					}
 				} catch (error) {
@@ -185,7 +186,7 @@ export class GetResponseTrigger implements INodeType {
 					}
 				}
 
-				await getresponseApiRequest.call(this, 'DELETE', '/accounts/callbacks');
+				await getresponseApiRequest.call(this, 'DELETE', requestPath`/accounts/callbacks`);
 
 				return false;
 			},
@@ -195,19 +196,22 @@ export class GetResponseTrigger implements INodeType {
 
 				const body = {
 					url: webhookUrl,
-					actions: events.reduce((accumulator: { [key: string]: boolean }, currentValue: string) => {
-						accumulator[currentValue] = true;
-						return accumulator;
-					}, {}),
+					actions: events.reduce(
+						(accumulator: { [key: string]: boolean }, currentValue: string) => {
+							accumulator[currentValue] = true;
+							return accumulator;
+						},
+						{},
+					),
 				};
 
-				await getresponseApiRequest.call(this, 'POST', '/accounts/callbacks', body);
+				await getresponseApiRequest.call(this, 'POST', requestPath`/accounts/callbacks`, body);
 
 				return true;
 			},
 			async delete(this: IHookFunctions): Promise<boolean> {
 				try {
-					await getresponseApiRequest.call(this, 'DELETE', '/accounts/callbacks');
+					await getresponseApiRequest.call(this, 'DELETE', requestPath`/accounts/callbacks`);
 				} catch (error) {
 					return false;
 				}
@@ -221,14 +225,12 @@ export class GetResponseTrigger implements INodeType {
 		const query = this.getQueryData() as IDataObject;
 		const listIds = this.getNodeParameter('listIds') as string[];
 
-		if (!listIds.includes('*') && !listIds.includes(query['CAMPAIGN_ID'] as string)) {
+		if (!listIds.includes('*') && !listIds.includes(query.CAMPAIGN_ID as string)) {
 			return {};
 		}
 
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(query),
-			],
+			workflowData: [this.helpers.returnJsonArray(query)],
 		};
 	}
 }

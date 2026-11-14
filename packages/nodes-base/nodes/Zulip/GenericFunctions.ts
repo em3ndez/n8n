@@ -1,29 +1,35 @@
-import { OptionsWithUri } from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
 	IHookFunctions,
 	IWebhookFunctions,
-	NodeApiError,
-	NodeOperationError,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function zulipApiRequest(this: IExecuteFunctions | IWebhookFunctions | IHookFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, query: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+import type { IMessage } from './MessageInterface';
+import type { IStream } from './StreamInterface';
+import type { IUser } from './UserInterface';
 
+export async function zulipApiRequest(
+	this: IExecuteFunctions | IWebhookFunctions | IHookFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+
+	body: IMessage | IStream | IUser = {},
+	query: IDataObject = {},
+	option: Pick<IRequestOptions, 'formData'> & { uri?: never; url?: never; baseURL?: never } = {},
+) {
 	const credentials = await this.getCredentials('zulipApi');
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
+	const endpoint = `${credentials.url.toString().replace(new RegExp('/$'), '')}/api/v1`;
 
-	const endpoint = `${credentials.url}/api/v1`;
-
-	let options: OptionsWithUri = {
+	let options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		auth: {
 			user: credentials.email as string,
 			password: credentials.apiKey as string,
@@ -32,9 +38,9 @@ export async function zulipApiRequest(this: IExecuteFunctions | IWebhookFunction
 			'Content-Type': 'application/x-www-form-urlencoded',
 		},
 		method,
-		form: body,
+		form: body as IDataObject,
 		qs: query,
-		uri: uri || `${endpoint}${resource}`,
+		uri: requestUrl`${endpoint}${resource}`,
 		json: true,
 	};
 	if (!Object.keys(body).length) {
@@ -45,13 +51,35 @@ export async function zulipApiRequest(this: IExecuteFunctions | IWebhookFunction
 	}
 	options = Object.assign({}, options, option);
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export function validateJSON(json: string | undefined): any { // tslint:disable-line:no-any
+// A multiOptions parameter normally resolves to an array. When its value comes
+// from an expression that is wrapped in surrounding text/whitespace, n8n
+// switches to string interpolation and the array is coerced to a comma-joined
+// string. Accept both shapes so the node degrades gracefully instead of
+// throwing a low-level "join is not a function" TypeError.
+export function toMultiOptionsCsv(value: unknown): string {
+	if (Array.isArray(value)) {
+		return value
+			.map((entry) => String(entry).trim())
+			.filter((entry) => entry.length > 0)
+			.join(',');
+	}
+	if (typeof value === 'string') {
+		return value
+			.split(',')
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0)
+			.join(',');
+	}
+	return '';
+}
+
+export function validateJSON(json: string | undefined): any {
 	let result;
 	try {
 		result = JSON.parse(json!);

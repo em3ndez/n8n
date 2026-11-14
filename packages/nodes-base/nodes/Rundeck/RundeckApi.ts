@@ -1,41 +1,65 @@
-import { OptionsWithUri } from 'request';
-import { IExecuteFunctions } from 'n8n-core';
-import { IDataObject, NodeApiError, NodeOperationError } from 'n8n-workflow';
+import type {
+	IDataObject,
+	IExecuteFunctions,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
+} from 'n8n-workflow';
+import { NodeApiError, NodeOperationError, requestPath, requestUrl } from 'n8n-workflow';
 
 export interface RundeckCredentials {
 	url: string;
 	token: string;
+	sslCertificateValidation?: 'default' | 'enabled' | 'disabled';
 }
 
 export class RundeckApi {
 	private credentials?: RundeckCredentials;
-	private executeFunctions: IExecuteFunctions;
 
+	private executeFunctions: IExecuteFunctions;
 
 	constructor(executeFunctions: IExecuteFunctions) {
 		this.executeFunctions = executeFunctions;
 	}
 
+	private shouldValidateCertificates(): boolean {
+		switch (this.credentials?.sslCertificateValidation) {
+			case 'enabled':
+				return true;
+			case 'disabled':
+				return false;
+			default:
+				return this.executeFunctions.getNode().typeVersion >= 1.1;
+		}
+	}
 
-	protected async request(method: string, endpoint: string, body: IDataObject, query: object) {
+	protected async request(
+		method: IHttpRequestMethods,
+		endpoint: RequestPath,
+		body: IDataObject,
+		query: IDataObject,
+	) {
+		const credentialType = 'rundeckApi';
 
-		const options: OptionsWithUri = {
-			headers: {
-				'user-agent': 'n8n',
-				'X-Rundeck-Auth-Token': this.credentials?.token,
-			},
-			rejectUnauthorized: false,
+		const options: WithRequestTarget<IRequestOptions, 'uri'> = {
+			rejectUnauthorized: this.shouldValidateCertificates(),
 			method,
 			qs: query,
-			uri: this.credentials?.url + endpoint,
+			uri: requestUrl`${this.credentials?.url}${endpoint}`,
 			body,
 			json: true,
 		};
 
 		try {
-			return await this.executeFunctions.helpers.request!(options);
+			return await this.executeFunctions.helpers.requestWithAuthentication.call(
+				this.executeFunctions,
+				credentialType,
+				options,
+			);
 		} catch (error) {
-			throw new NodeApiError(this.executeFunctions.getNode(), error);
+			throw new NodeApiError(this.executeFunctions.getNode(), error as JsonObject);
 		}
 	}
 
@@ -49,13 +73,12 @@ export class RundeckApi {
 		this.credentials = credentials as unknown as RundeckCredentials;
 	}
 
-	executeJob(jobId: string, args: IDataObject[]): Promise<IDataObject> {
-
+	async executeJob(jobId: string, args: IDataObject[], filter?: string): Promise<IDataObject> {
 		let params = '';
 
-		if(args) {
-			for(const arg of args) {
-				params += '-' + arg.name + ' ' + arg.value + ' ';
+		if (args) {
+			for (const arg of args) {
+				params += '-' + (arg.name as string) + ' ' + (arg.value as string) + ' ';
 			}
 		}
 
@@ -63,11 +86,15 @@ export class RundeckApi {
 			argString: params,
 		};
 
-		return this.request('POST', `/api/14/job/${jobId}/run`, body, {});
+		const query: IDataObject = {};
+		if (filter) {
+			query.filter = filter;
+		}
+
+		return await this.request('POST', requestPath`/api/14/job/${jobId}/run`, body, query);
 	}
 
-	getJobMetadata(jobId: string): Promise<IDataObject> {
-		return this.request('GET', `/api/18/job/${jobId}/info`, {}, {});
+	async getJobMetadata(jobId: string): Promise<IDataObject> {
+		return await this.request('GET', requestPath`/api/18/job/${jobId}/info`, {}, {});
 	}
-
 }

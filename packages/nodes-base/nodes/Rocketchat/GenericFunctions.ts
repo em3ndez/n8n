@@ -1,46 +1,78 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IHookFunctions,
+	IHttpRequestMethods,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-import { NodeApiError, NodeOperationError, } from 'n8n-workflow';
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
+} from 'n8n-workflow';
+import { requestUrl } from 'n8n-workflow';
 
-export async function rocketchatApiRequest(this: IExecuteFunctions | ILoadOptionsFunctions, resource: string, method: string, operation: string, body: any = {}, headers?: object): Promise<any> { // tslint:disable-line:no-any
+export async function rocketchatApiRequest(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	resource: RequestPath,
+	method: IHttpRequestMethods,
+	operation: string,
+
+	body: any = {},
+	queryParams?: IDataObject,
+	headers?: IDataObject,
+): Promise<any> {
 	const credentials = await this.getCredentials('rocketchatApi');
 
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
-
-	const headerWithAuthentication = Object.assign({}, headers,
-		{
-			'X-Auth-Token': credentials.authKey,
-			'X-User-Id': credentials.userId,
-		},
-	);
-
-	const options: OptionsWithUri = {
-		headers: headerWithAuthentication,
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
+		headers,
 		method,
 		body,
-		uri: `${credentials.domain}/api/v1${resource}.${operation}`,
+		uri: requestUrl`${credentials.domain}/api/v1${resource}.${operation}`,
+		qs: queryParams,
 		json: true,
 	};
-	if (Object.keys(options.body).length === 0) {
+	if (Object.keys(options.body as IDataObject).length === 0) {
 		delete options.body;
 	}
-	try {
-		return await this.helpers.request!(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+	return await this.helpers.requestWithAuthentication.call(this, 'rocketchatApi', options);
 }
 
-export function validateJSON(json: string | undefined): any { // tslint:disable-line:no-any
+export async function rocketchatApiRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	resource: RequestPath,
+	method: IHttpRequestMethods,
+	operation: string,
+	body: IDataObject = {},
+	queryParams: IDataObject = {},
+): Promise<IDataObject[]> {
+	const returnData: IDataObject[] = [];
+	let responseData: IDataObject;
+	let offset = 0;
+	const { limit: _limit, ...paginationQuery } = queryParams;
+	const count = paginationQuery.count ?? 100;
+
+	do {
+		responseData = (await rocketchatApiRequest.call(this, resource, method, operation, body, {
+			...paginationQuery,
+			offset,
+			count,
+		})) as IDataObject;
+
+		const responseItems = responseData[propertyName] as IDataObject[] | undefined;
+
+		if (!Array.isArray(responseItems) || responseItems.length === 0) {
+			break;
+		}
+
+		returnData.push.apply(returnData, responseItems);
+		offset = returnData.length;
+	} while (
+		returnData.length < ((responseData.total as number | undefined) ?? Number.POSITIVE_INFINITY)
+	);
+
+	return returnData;
+}
+
+export function validateJSON(json: string | undefined): any {
 	let result;
 	try {
 		result = JSON.parse(json!);

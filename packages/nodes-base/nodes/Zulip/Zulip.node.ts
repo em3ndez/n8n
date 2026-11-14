@@ -1,41 +1,22 @@
-import {
-	BINARY_ENCODING,
-	IExecuteFunctions,
-} from 'n8n-core';
-import {
+import { snakeCase } from 'change-case';
+import type {
 	IDataObject,
+	IExecuteFunctions,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
 } from 'n8n-workflow';
-import {
-	zulipApiRequest,
-} from './GenericFunctions';
-import {
-	messageFields,
-	messageOperations,
-} from './MessageDescription';
-import {
-	IMessage,
-} from './MessageInterface';
-import { snakeCase } from 'change-case';
-import {
-	streamFields,
-	streamOperations,
-} from './StreamDescription';
-import {
-	userFields,
-	userOperations,
-} from './UserDescription';
-import {
-	IPrincipal,
-	IStream,
-} from './StreamInterface';
-import { validateJSON } from './GenericFunctions';
-import { IUser } from './UserInterface';
+import { NodeConnectionTypes, NodeOperationError, requestPath } from 'n8n-workflow';
+
+import { toMultiOptionsCsv, validateJSON, zulipApiRequest } from './GenericFunctions';
+import { messageFields, messageOperations } from './MessageDescription';
+import type { IMessage } from './MessageInterface';
+import { streamFields, streamOperations } from './StreamDescription';
+import type { IPrincipal, IStream } from './StreamInterface';
+import { userFields, userOperations } from './UserDescription';
+import type { IUser } from './UserInterface';
 
 export class Zulip implements INodeType {
 	description: INodeTypeDescription = {
@@ -48,10 +29,10 @@ export class Zulip implements INodeType {
 		description: 'Consume Zulip API',
 		defaults: {
 			name: 'Zulip',
-			color: '#156742',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'zulipApi',
@@ -63,6 +44,7 @@ export class Zulip implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Message',
@@ -78,7 +60,6 @@ export class Zulip implements INodeType {
 					},
 				],
 				default: 'message',
-				description: 'Resource to consume.',
 			},
 			// MESSAGE
 			...messageOperations,
@@ -91,17 +72,16 @@ export class Zulip implements INodeType {
 			// USER
 			...userOperations,
 			...userFields,
-
 		],
 	};
 
 	methods = {
 		loadOptions: {
-			// Get all the available streams to display them to user so that he can
+			// Get all the available streams to display them to user so that they can
 			// select them easily
 			async getStreams(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const { streams } = await zulipApiRequest.call(this, 'GET', '/streams');
+				const { streams } = await zulipApiRequest.call(this, 'GET', requestPath`/streams`);
 				for (const stream of streams) {
 					const streamName = stream.name;
 					const streamId = stream.stream_id;
@@ -112,12 +92,16 @@ export class Zulip implements INodeType {
 				}
 				return returnData;
 			},
-			// Get all the available topics to display them to user so that he can
+			// Get all the available topics to display them to user so that they can
 			// select them easily
 			async getTopics(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const streamId = this.getCurrentNodeParameter('stream') as string;
 				const returnData: INodePropertyOptions[] = [];
-				const { topics } = await zulipApiRequest.call(this, 'GET', `/users/me/${streamId}/topics`);
+				const { topics } = await zulipApiRequest.call(
+					this,
+					'GET',
+					requestPath`/users/me/${streamId}/topics`,
+				);
 				for (const topic of topics) {
 					const topicName = topic.name;
 					const topicId = topic.name;
@@ -128,11 +112,11 @@ export class Zulip implements INodeType {
 				}
 				return returnData;
 			},
-			// Get all the available users to display them to user so that he can
+			// Get all the available users to display them to user so that they can
 			// select them easily
 			async getUsers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const returnData: INodePropertyOptions[] = [];
-				const { members } = await zulipApiRequest.call(this, 'GET', '/users');
+				const { members } = await zulipApiRequest.call(this, 'GET', requestPath`/users`);
 				for (const member of members) {
 					const memberName = member.full_name;
 					const memberId = member.email;
@@ -148,27 +132,26 @@ export class Zulip implements INodeType {
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const returnData: IDataObject[] = [];
-		const length = items.length as unknown as number;
+		const returnData: INodeExecutionData[] = [];
+		const length = items.length;
 		let responseData;
-		const qs: IDataObject = {};
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
 		for (let i = 0; i < length; i++) {
 			try {
 				if (resource === 'message') {
-					//https://zulipchat.com/api/send-message
+					//https://zulip.com/api/send-message
 					if (operation === 'sendPrivate') {
-						const to = (this.getNodeParameter('to', i) as string[]).join(',');
+						const to = toMultiOptionsCsv(this.getNodeParameter('to', i));
 						const content = this.getNodeParameter('content', i) as string;
 						const body: IMessage = {
 							type: 'private',
 							to,
 							content,
 						};
-						responseData = await zulipApiRequest.call(this, 'POST', '/messages', body);
+						responseData = await zulipApiRequest.call(this, 'POST', requestPath`/messages`, body);
 					}
-					//https://zulipchat.com/api/send-message
+					//https://zulip.com/api/send-message
 					if (operation === 'sendStream') {
 						const stream = this.getNodeParameter('stream', i) as string;
 						const topic = this.getNodeParameter('topic', i) as string;
@@ -179,59 +162,72 @@ export class Zulip implements INodeType {
 							topic,
 							content,
 						};
-						responseData = await zulipApiRequest.call(this, 'POST', '/messages', body);
+						responseData = await zulipApiRequest.call(this, 'POST', requestPath`/messages`, body);
 					}
-					//https://zulipchat.com/api/update-message
+					//https://zulip.com/api/update-message
 					if (operation === 'update') {
 						const messageId = this.getNodeParameter('messageId', i) as string;
-						const updateFields = this.getNodeParameter('updateFields', i) as IDataObject;
+						const updateFields = this.getNodeParameter('updateFields', i);
 						const body: IMessage = {};
 						if (updateFields.content) {
 							body.content = updateFields.content as string;
 						}
 						if (updateFields.propagateMode) {
-							body.propagat_mode = snakeCase(updateFields.propagateMode as string);
+							body.propagate_mode = snakeCase(updateFields.propagateMode as string);
 						}
 						if (updateFields.topic) {
 							body.topic = updateFields.topic as string;
 						}
-						responseData = await zulipApiRequest.call(this, 'PATCH', `/messages/${messageId}`, body);
+						responseData = await zulipApiRequest.call(
+							this,
+							'PATCH',
+							requestPath`/messages/${messageId}`,
+							body,
+						);
 					}
-					//https://zulipchat.com/api/get-raw-message
+					//https://zulip.com/api/get-message
 					if (operation === 'get') {
 						const messageId = this.getNodeParameter('messageId', i) as string;
-						responseData = await zulipApiRequest.call(this, 'GET', `/messages/${messageId}`);
+						responseData = await zulipApiRequest.call(
+							this,
+							'GET',
+							requestPath`/messages/${messageId}`,
+						);
 					}
-					//https://zulipchat.com/api/delete-message
+					//https://zulip.com/api/delete-message
 					if (operation === 'delete') {
 						const messageId = this.getNodeParameter('messageId', i) as string;
-						responseData = await zulipApiRequest.call(this, 'DELETE', `/messages/${messageId}`);
+						responseData = await zulipApiRequest.call(
+							this,
+							'DELETE',
+							requestPath`/messages/${messageId}`,
+						);
 					}
-					//https://zulipchat.com/api/upload-file
+					//https://zulip.com/api/upload-file
 					if (operation === 'updateFile') {
 						const credentials = await this.getCredentials('zulipApi');
-						const binaryProperty = this.getNodeParameter('dataBinaryProperty', i) as string;
-						if (items[i].binary === undefined) {
-							throw new NodeOperationError(this.getNode(), 'No binary data exists on item!');
-						}
-						//@ts-ignore
-						if (items[i].binary[binaryProperty] === undefined) {
-							throw new NodeOperationError(this.getNode(), `No binary data property "${binaryProperty}" does not exists on item!`);
-						}
+						const dataBinaryProperty = this.getNodeParameter('dataBinaryProperty', i);
+
+						const binaryData = this.helpers.assertBinaryData(i, dataBinaryProperty);
+						const binaryDataBuffer = await this.helpers.getBinaryDataBuffer(i, dataBinaryProperty);
 						const formData = {
 							file: {
-								//@ts-ignore
-								value: Buffer.from(items[i].binary[binaryProperty].data, BINARY_ENCODING),
+								value: binaryDataBuffer,
 								options: {
-									//@ts-ignore
-									filename: items[i].binary[binaryProperty].fileName,
-									//@ts-ignore
-									contentType: items[i].binary[binaryProperty].mimeType,
+									filename: binaryData.fileName,
+									contentType: binaryData.mimeType,
 								},
 							},
 						};
-						responseData = await zulipApiRequest.call(this, 'POST', '/user_uploads', {}, {}, undefined, { formData });
-						responseData.uri = `${credentials!.url}${responseData.uri}`;
+						responseData = await zulipApiRequest.call(
+							this,
+							'POST',
+							requestPath`/user_uploads`,
+							{},
+							{},
+							{ formData },
+						);
+						responseData.uri = `${credentials.url}${responseData.uri}`;
 					}
 				}
 
@@ -239,7 +235,7 @@ export class Zulip implements INodeType {
 					const body: IStream = {};
 
 					if (operation === 'getAll') {
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						if (additionalFields.includePublic) {
 							body.include_public = additionalFields.includePublic as boolean;
@@ -257,42 +253,52 @@ export class Zulip implements INodeType {
 							body.include_owner_subscribed = additionalFields.includeOwnersubscribed as boolean;
 						}
 
-						responseData = await zulipApiRequest.call(this, 'GET', `/streams`, body);
+						responseData = await zulipApiRequest.call(this, 'GET', requestPath`/streams`, body);
 						responseData = responseData.streams;
 					}
 
 					if (operation === 'getSubscribed') {
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						if (additionalFields.includeSubscribers) {
 							body.include_subscribers = additionalFields.includeSubscribers as boolean;
 						}
 
-						responseData = await zulipApiRequest.call(this, 'GET', `/users/me/subscriptions`, body);
+						responseData = await zulipApiRequest.call(
+							this,
+							'GET',
+							requestPath`/users/me/subscriptions`,
+							body,
+						);
 						responseData = responseData.subscriptions;
 					}
 
 					if (operation === 'create') {
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 						const subscriptions = this.getNodeParameter('subscriptions', i) as IDataObject;
 
 						body.subscriptions = JSON.stringify(subscriptions.properties);
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
 								if (validateJSON(additionalFieldsJson) !== undefined) {
 									Object.assign(body, JSON.parse(additionalFieldsJson));
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
-
 						} else {
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+							const additionalFields = this.getNodeParameter('additionalFields', i);
 
-							const subscriptions = this.getNodeParameter('subscriptions', i) as IDataObject;
 							body.subscriptions = JSON.stringify(subscriptions.properties);
 
 							if (additionalFields.inviteOnly) {
@@ -307,10 +313,12 @@ export class Zulip implements INodeType {
 								body.principals = JSON.stringify(principals);
 							}
 							if (additionalFields.authorizationErrorsFatal) {
-								body.authorization_errors_fatal = additionalFields.authorizationErrorsFatal as boolean;
+								body.authorization_errors_fatal =
+									additionalFields.authorizationErrorsFatal as boolean;
 							}
 							if (additionalFields.historyPublicToSubscribers) {
-								body.history_public_to_subscribers = additionalFields.historyPublicToSubscribers as boolean;
+								body.history_public_to_subscribers =
+									additionalFields.historyPublicToSubscribers as boolean;
 							}
 							if (additionalFields.streamPostPolicy) {
 								body.stream_post_policy = additionalFields.streamPostPolicy as number;
@@ -320,37 +328,49 @@ export class Zulip implements INodeType {
 							}
 						}
 
-						responseData = await zulipApiRequest.call(this, 'POST', `/users/me/subscriptions`, body);
+						responseData = await zulipApiRequest.call(
+							this,
+							'POST',
+							requestPath`/users/me/subscriptions`,
+							body,
+						);
 					}
 
 					if (operation === 'delete') {
 						const streamId = this.getNodeParameter('streamId', i) as string;
 
-						responseData = await zulipApiRequest.call(this, 'DELETE', `/streams/${streamId}`, {});
+						responseData = await zulipApiRequest.call(
+							this,
+							'DELETE',
+							requestPath`/streams/${streamId}`,
+							{},
+						);
 					}
 
 					if (operation === 'update') {
 						const streamId = this.getNodeParameter('streamId', i) as string;
 
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
-
 								if (validateJSON(additionalFieldsJson) !== undefined) {
-
 									Object.assign(body, JSON.parse(additionalFieldsJson));
-
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
-
 						} else {
-
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+							const additionalFields = this.getNodeParameter('additionalFields', i);
 
 							if (additionalFields.description) {
 								body.description = JSON.stringify(additionalFields.description as string);
@@ -368,12 +388,17 @@ export class Zulip implements INodeType {
 								body.stream_post_policy = additionalFields.streamPostPolicy as number;
 							}
 							if (additionalFields.historyPublicToSubscribers) {
-								body.history_public_to_subscribers = additionalFields.historyPublicToSubscribers as boolean;
+								body.history_public_to_subscribers =
+									additionalFields.historyPublicToSubscribers as boolean;
 							}
 
-							responseData = await zulipApiRequest.call(this, 'PATCH', `/streams/${streamId}`, body);
+							responseData = await zulipApiRequest.call(
+								this,
+								'PATCH',
+								requestPath`/streams/${streamId}`,
+								body,
+							);
 						}
-
 					}
 				}
 
@@ -382,30 +407,36 @@ export class Zulip implements INodeType {
 
 					if (operation === 'get') {
 						const userId = this.getNodeParameter('userId', i) as string;
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						if (additionalFields.clientGravatar) {
 							body.client_gravatar = additionalFields.client_gravatar as boolean;
 						}
 						if (additionalFields.includeCustomProfileFields) {
-							body.include_custom_profile_fields = additionalFields.includeCustomProfileFields as boolean;
+							body.include_custom_profile_fields =
+								additionalFields.includeCustomProfileFields as boolean;
 						}
 
-						responseData = await zulipApiRequest.call(this, 'GET', `/users/${userId}`, body);
-
+						responseData = await zulipApiRequest.call(
+							this,
+							'GET',
+							requestPath`/users/${userId}`,
+							body,
+						);
 					}
 
 					if (operation === 'getAll') {
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						if (additionalFields.clientGravatar) {
 							body.client_gravatar = additionalFields.client_gravatar as boolean;
 						}
 						if (additionalFields.includeCustomProfileFields) {
-							body.include_custom_profile_fields = additionalFields.includeCustomProfileFields as boolean;
+							body.include_custom_profile_fields =
+								additionalFields.includeCustomProfileFields as boolean;
 						}
 
-						responseData = await zulipApiRequest.call(this, 'GET', `/users`, body);
+						responseData = await zulipApiRequest.call(this, 'GET', requestPath`/users`, body);
 						responseData = responseData.members;
 					}
 
@@ -415,12 +446,12 @@ export class Zulip implements INodeType {
 						body.full_name = this.getNodeParameter('fullName', i) as string;
 						body.short_name = this.getNodeParameter('shortName', i) as string;
 
-						responseData = await zulipApiRequest.call(this, 'POST', `/users`, body);
+						responseData = await zulipApiRequest.call(this, 'POST', requestPath`/users`, body);
 					}
 
 					if (operation === 'update') {
 						const userId = this.getNodeParameter('userId', i) as string;
-						const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+						const additionalFields = this.getNodeParameter('additionalFields', i);
 
 						if (additionalFields.fullName) {
 							body.full_name = JSON.stringify(additionalFields.fullName as string);
@@ -436,32 +467,45 @@ export class Zulip implements INodeType {
 						}
 						if (additionalFields.profileData) {
 							//@ts-ignore
-							body.profile_data = additionalFields.profileData.properties as [{}];
+							body.profile_data = additionalFields.profileData.properties as [IDataObject];
 						}
 
-						responseData = await zulipApiRequest.call(this, 'PATCH', `/users/${userId}`, body);
+						responseData = await zulipApiRequest.call(
+							this,
+							'PATCH',
+							requestPath`/users/${userId}`,
+							body,
+						);
 					}
 
 					if (operation === 'deactivate') {
 						const userId = this.getNodeParameter('userId', i) as string;
 
-						responseData = await zulipApiRequest.call(this, 'DELETE', `/users/${userId}`, body);
+						responseData = await zulipApiRequest.call(
+							this,
+							'DELETE',
+							requestPath`/users/${userId}`,
+							body,
+						);
 					}
 				}
-
-				if (Array.isArray(responseData)) {
-					returnData.push.apply(returnData, responseData as IDataObject[]);
-				} else {
-					returnData.push(responseData as IDataObject);
-				}
+				const executionData = this.helpers.constructExecutionMetaData(
+					this.helpers.returnJsonArray(responseData as IDataObject[]),
+					{ itemData: { item: i } },
+				);
+				returnData.push(...executionData);
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const executionData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push(...executionData);
 					continue;
 				}
 				throw error;
 			}
 		}
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

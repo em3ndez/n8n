@@ -1,56 +1,52 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
-	NodeApiError,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
-
-import {
-	OptionsWithUri,
-} from 'request';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 /**
  * Make an API request to HackerNews
  *
- * @param {IHookFunctions} this
- * @param {string} method
- * @param {string} endpoint
- * @param {IDataObject} qs
- * @returns {Promise<any>}
  */
-export async function hackerNewsApiRequest(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, qs: IDataObject): Promise<any> { // tslint:disable-line:no-any
-	const options: OptionsWithUri = {
+export async function hackerNewsApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	qs: IDataObject,
+): Promise<any> {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		qs,
-		uri: `http://hn.algolia.com/api/v1/${endpoint}`,
+		uri: requestUrl`http://hn.algolia.com/api/v1/${endpoint}`,
 		json: true,
 	};
 
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
-
 
 /**
  * Make an API request to HackerNews
  * and return all results
  *
- * @export
  * @param {(IHookFunctions | IExecuteFunctions)} this
- * @param {string} method
- * @param {string} endpoint
- * @param {IDataObject} qs
- * @returns {Promise<any>}
  */
-export async function hackerNewsApiRequestAllItems(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, qs: IDataObject): Promise<any> { // tslint:disable-line:no-any
-
+export async function hackerNewsApiRequestAllItems(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	qs: IDataObject,
+): Promise<any> {
 	qs.hitsPerPage = 100;
 
 	const returnData: IDataObject[] = [];
@@ -60,15 +56,12 @@ export async function hackerNewsApiRequestAllItems(this: IHookFunctions | IExecu
 
 	do {
 		responseData = await hackerNewsApiRequest.call(this, method, endpoint, qs);
-		returnData.push.apply(returnData, responseData.hits);
+		returnData.push.apply(returnData, responseData.hits as IDataObject[]);
 
 		if (returnData !== undefined) {
 			itemsReceived += returnData.length;
 		}
-
-	} while (
-		responseData.nbHits > itemsReceived
-	);
+	} while (responseData.nbHits > itemsReceived);
 
 	return returnData;
 }

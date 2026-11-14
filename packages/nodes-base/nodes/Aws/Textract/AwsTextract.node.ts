@@ -1,26 +1,20 @@
 import {
-	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
-	IBinaryKeyData,
-	ICredentialDataDecryptedObject,
-	ICredentialsDecrypted,
-	ICredentialTestFunctions,
-	IDataObject,
-	INodeExecutionData,
-	INodeType,
-	INodeTypeDescription,
-	NodeCredentialTestResult,
-	NodeOperationError,
+	BINARY_ENCODING,
+	NodeConnectionTypes,
+	type ICredentialDataDecryptedObject,
+	type ICredentialsDecrypted,
+	type ICredentialTestFunctions,
+	type IDataObject,
+	type IExecuteFunctions,
+	type INodeCredentialTestResult,
+	type INodeExecutionData,
+	type INodeType,
+	type INodeTypeDescription,
 } from 'n8n-workflow';
 
-import {
-	awsApiRequestREST,
-	IExpenseDocument,
-	simplify,
-	validateCrendetials,
-} from './GenericFunctions';
+import type { IExpenseDocument } from './GenericFunctions';
+import { awsApiRequestREST, simplify, validateCredentials } from './GenericFunctions';
+import { awsNodeAuthOptions, awsNodeCredentials } from '../utils';
 
 export class AwsTextract implements INodeType {
 	description: INodeTypeDescription = {
@@ -33,22 +27,18 @@ export class AwsTextract implements INodeType {
 		description: 'Sends data to Amazon Textract',
 		defaults: {
 			name: 'AWS Textract',
-			color: '#5aa08d',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
-		credentials: [
-			{
-				name: 'aws',
-				required: true,
-				testedBy: 'awsTextractApiCredentialTest',
-			},
-		],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
+		credentials: awsNodeCredentials,
 		properties: [
+			awsNodeAuthOptions,
 			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Analyze Receipt or Invoice',
@@ -56,7 +46,6 @@ export class AwsTextract implements INodeType {
 					},
 				],
 				default: 'analyzeExpense',
-				description: '',
 			},
 			{
 				displayName: 'Input Data Field Name',
@@ -65,36 +54,41 @@ export class AwsTextract implements INodeType {
 				default: 'data',
 				displayOptions: {
 					show: {
-						operation: [
-							'analyzeExpense',
-						],
+						operation: ['analyzeExpense'],
 					},
 				},
 				required: true,
-				description: 'The name of the input field containing the binary file data to be uploaded. Supported file types: PNG, JPEG',
+				description:
+					'The name of the input field containing the binary file data to be uploaded. Supported file types: PNG, JPEG.',
 			},
 			{
-				displayName: 'Simplify Response',
+				displayName: 'Simplify',
 				name: 'simple',
 				type: 'boolean',
 				displayOptions: {
 					show: {
-						operation: [
-							'analyzeExpense',
-						],
+						operation: ['analyzeExpense'],
 					},
 				},
 				default: true,
-				description: 'Return a simplified version of the response instead of the raw data.',
+				description:
+					'Whether to return a simplified version of the response instead of the raw data',
 			},
 		],
 	};
 
 	methods = {
 		credentialTest: {
-			async awsTextractApiCredentialTest(this: ICredentialTestFunctions, credential: ICredentialsDecrypted): Promise<NodeCredentialTestResult> {
+			async awsTextractApiCredentialTest(
+				this: ICredentialTestFunctions,
+				credential: ICredentialsDecrypted,
+			): Promise<INodeCredentialTestResult> {
 				try {
-					await validateCrendetials.call(this, credential.data as ICredentialDataDecryptedObject, 'sts');
+					await validateCredentials.call(
+						this,
+						credential.data as ICredentialDataDecryptedObject,
+						'sts',
+					);
 				} catch (error) {
 					return {
 						status: 'Error',
@@ -114,32 +108,32 @@ export class AwsTextract implements INodeType {
 		const items = this.getInputData();
 		const returnData: IDataObject[] = [];
 		let responseData;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const operation = this.getNodeParameter('operation', 0);
 		for (let i = 0; i < items.length; i++) {
 			try {
 				//https://docs.aws.amazon.com/textract/latest/dg/API_AnalyzeExpense.html
 				if (operation === 'analyzeExpense') {
-					const binaryProperty = this.getNodeParameter('binaryPropertyName', i) as string;
 					const simple = this.getNodeParameter('simple', i) as boolean;
-
-					if (items[i].binary === undefined) {
-						throw new NodeOperationError(this.getNode(), 'No binary data exists on item!');
-					}
-
-					if ((items[i].binary as IBinaryKeyData)[binaryProperty] === undefined) {
-						throw new NodeOperationError(this.getNode(), `No binary data property "${binaryProperty}" does not exists on item!`);
-					}
-
-					const binaryPropertyData = (items[i].binary as IBinaryKeyData)[binaryProperty];
+					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i);
+					const binaryBuffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);
+					// Convert the binary buffer to a base64 string
+					const binaryData = Buffer.from(binaryBuffer).toString(BINARY_ENCODING);
 
 					const body: IDataObject = {
 						Document: {
-							Bytes: binaryPropertyData.data,
+							Bytes: binaryData,
 						},
 					};
 
 					const action = 'Textract.AnalyzeExpense';
-					responseData = await awsApiRequestREST.call(this, 'textract', 'POST', '', JSON.stringify(body), { 'x-amz-target': action, 'Content-Type': 'application/x-amz-json-1.1' }) as IExpenseDocument;
+					responseData = (await awsApiRequestREST.call(
+						this,
+						'textract',
+						'POST',
+						'',
+						JSON.stringify(body),
+						{ 'x-amz-target': action, 'Content-Type': 'application/x-amz-json-1.1' },
+					)) as IExpenseDocument;
 					if (simple) {
 						responseData = simplify(responseData);
 					}

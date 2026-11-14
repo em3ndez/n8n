@@ -1,123 +1,115 @@
-import {
-	BINARY_ENCODING,
+/* eslint-disable n8n-nodes-base/node-execute-block-wrong-error-thrown */
+import { createWriteStream } from 'fs';
+import { stat } from 'fs/promises';
+import isbot from 'isbot';
+import type {
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	INodeExecutionData,
-	INodeType,
 	INodeTypeDescription,
 	IWebhookResponseData,
-	NodeOperationError,
+	INodeProperties,
+	N8nOAuth2BrowserFlowMode,
 } from 'n8n-workflow';
+import {
+	BINARY_ENCODING,
+	NodeOperationError,
+	Node,
+	n8nOAuth2Auth,
+	resolveOAuthClientMode,
+} from 'n8n-workflow';
+import { pipeline } from 'stream/promises';
+import { file as tmpFile } from 'tmp-promise';
+import { v4 as uuid } from 'uuid';
 
-import * as basicAuth from 'basic-auth';
+import { listBearerTrustedSources } from '../../utils/trusted-source';
+import {
+	authenticationProperty,
+	credentialsProperty,
+	defaultWebhookDescription,
+	httpMethodsProperty,
+	inboundTriggerAuthenticationBuilderHint,
+	optionsProperty,
+	requireExecuteAccessProperty,
+	responseBinaryPropertyNameProperty,
+	responseCodeOption,
+	responseCodeProperty,
+	responseDataProperty,
+	responseModeProperty,
+	responseModePropertyStreaming,
+	trustedSourceProperty,
+} from './description';
+import { WebhookAuthorizationError } from './error';
+import {
+	checkResponseModeConfiguration,
+	configuredOutputs,
+	handleFormData,
+	isIpAllowed,
+	setupOutputConnection,
+	validateWebhookAuthentication,
+} from './utils';
 
-import { Response } from 'express';
+export class Webhook extends Node {
+	authPropertyName = 'authentication';
 
-import * as fs from 'fs';
-
-import * as formidable from 'formidable';
-
-function authorizationError(resp: Response, realm: string, responseCode: number, message?: string) {
-	if (message === undefined) {
-		message = 'Authorization problem!';
-		if (responseCode === 401) {
-			message = 'Authorization is required!';
-		} else if (responseCode === 403) {
-			message = 'Authorization data is wrong!';
-		}
-	}
-
-	resp.writeHead(responseCode, { 'WWW-Authenticate': `Basic realm="${realm}"` });
-	resp.end(message);
-	return {
-		noWebhookResponse: true,
-	};
-}
-
-export class Webhook implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Webhook',
-		icon: 'file:webhook.svg',
+		icon: 'node:webhook',
+		iconColor: 'magenta',
 		name: 'webhook',
 		group: ['trigger'],
-		version: 1,
+		version: [1, 1.1, 2, 2.1, 2.2],
+		defaultVersion: 2.2,
 		description: 'Starts the workflow when a webhook is called',
 		eventTriggerDescription: 'Waiting for you to call the Test URL',
+		activationMessage: 'You can now make calls to your production webhook URL.',
 		defaults: {
 			name: 'Webhook',
-			color: '#885577',
 		},
+		supportsCORS: true,
+		triggerPanel: {
+			header: '',
+			executionsHelp: {
+				inactive:
+					"Webhooks have two modes: test and production. <br /> <br /> <b>Use test mode while you build your workflow</b>. Click the 'listen' button, then make a request to the test URL. The executions will show up in the editor.<br /> <br /> <b>Use production mode to run your workflow automatically</b>. Publish the workflow, then make requests to the production URL. These executions will show up in the executions list, but not in the editor.",
+				active:
+					'Webhooks have two modes: test and production. <br /> <br /> <b>Use test mode while you build your workflow</b>. Click the \'listen\' button, then make a request to the test URL. The executions will show up in the editor.<br /> <br /> <b>Use production mode to run your workflow automatically</b>. Since the workflow is activated, you can make requests to the production URL. These executions will show up in the <a data-key="executions">executions list</a>, but not in the editor.',
+			},
+			activationHint:
+				"Once you've finished building your workflow, run it without having to click this button by using the production webhook URL.",
+		},
+
 		inputs: [],
-		outputs: ['main'],
-		credentials: [
-			{
-				name: 'httpBasicAuth',
-				required: true,
-				displayOptions: {
-					show: {
-						authentication: [
-							'basicAuth',
-						],
-					},
-				},
-			},
-			{
-				name: 'httpHeaderAuth',
-				required: true,
-				displayOptions: {
-					show: {
-						authentication: [
-							'headerAuth',
-						],
-					},
-				},
-			},
-		],
-		webhooks: [
-			{
-				name: 'default',
-				httpMethod: '={{$parameter["httpMethod"]}}',
-				isFullPath: true,
-				responseCode: '={{$parameter["responseCode"]}}',
-				responseMode: '={{$parameter["responseMode"]}}',
-				responseData: '={{$parameter["responseData"]}}',
-				responseBinaryPropertyName: '={{$parameter["responseBinaryPropertyName"]}}',
-				responseContentType: '={{$parameter["options"]["responseContentType"]}}',
-				responsePropertyName: '={{$parameter["options"]["responsePropertyName"]}}',
-				responseHeaders: '={{$parameter["options"]["responseHeaders"]}}',
-				path: '={{$parameter["path"]}}',
-			},
-		],
+		outputs: `={{(${configuredOutputs})($parameter)}}`,
+		credentials: credentialsProperty(this.authPropertyName),
+		webhooks: [defaultWebhookDescription],
+		sensitiveOutputFields: ['headers.authorization', 'headers.cookie'],
 		properties: [
 			{
-				displayName: 'Authentication',
-				name: 'authentication',
-				type: 'options',
-				options: [
-					{
-						name: 'Basic Auth',
-						value: 'basicAuth',
-					},
-					{
-						name: 'Header Auth',
-						value: 'headerAuth',
-					},
-					{
-						name: 'None',
-						value: 'none',
-					},
-				],
-				default: 'none',
-				description: 'The way to authenticate.',
+				displayName: 'Allow Multiple HTTP Methods',
+				name: 'multipleMethods',
+				type: 'boolean',
+				default: false,
+				isNodeSetting: true,
+				description: 'Whether to allow the webhook to listen for multiple HTTP methods',
 			},
 			{
-				displayName: 'HTTP Method',
+				...httpMethodsProperty,
+				displayOptions: {
+					show: {
+						multipleMethods: [false],
+					},
+				},
+			},
+			{
+				displayName: 'HTTP Methods',
 				name: 'httpMethod',
-				type: 'options',
+				type: 'multiOptions',
 				options: [
+					{
+						name: 'DELETE',
+						value: 'DELETE',
+					},
 					{
 						name: 'GET',
 						value: 'GET',
@@ -127,12 +119,25 @@ export class Webhook implements INodeType {
 						value: 'HEAD',
 					},
 					{
+						name: 'PATCH',
+						value: 'PATCH',
+					},
+					{
 						name: 'POST',
 						value: 'POST',
 					},
+					{
+						name: 'PUT',
+						value: 'PUT',
+					},
 				],
-				default: 'GET',
-				description: 'The HTTP method to listen to.',
+				default: ['GET', 'POST'],
+				description: 'The HTTP methods to listen to',
+				displayOptions: {
+					show: {
+						multipleMethods: [true],
+					},
+				},
 			},
 			{
 				displayName: 'Path',
@@ -140,426 +145,286 @@ export class Webhook implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder: 'webhook',
-				required: true,
-				description: 'The path to listen to.',
+				builderHint: {
+					propertyHint: 'The webhook path that triggers this workflow',
+					placeholderSupported: false,
+				},
+				description:
+					"The path to listen to, dynamic values could be specified by using ':', e.g. 'your-path/:dynamic-value'. If dynamic values are set 'webhookId' would be prepended to path.",
 			},
 			{
-				displayName: 'Respond',
-				name: 'responseMode',
-				type: 'options',
-				options: [
-					{
-						name: 'Immediately',
-						value: 'onReceived',
-						description: 'As soon as this node executes',
-					},
-					{
-						name: 'When last node finishes',
-						value: 'lastNode',
-						description: 'Returns data of the last-executed node',
-					},
-					{
-						name: 'Using \'Respond to Webhook\' node',
-						value: 'responseNode',
-						description: 'Response defined in that node',
-					},
-				],
-				default: 'onReceived',
-				description: 'When and how to respond to the webhook.',
+				...authenticationProperty(this.authPropertyName, true),
+				builderHint: inboundTriggerAuthenticationBuilderHint,
 			},
+			requireExecuteAccessProperty(this.authPropertyName),
+			trustedSourceProperty(this.authPropertyName),
+			responseModeProperty,
+			responseModePropertyStreaming,
 			{
-				displayName: 'Insert a \'Respond to Webhook\' node to control when and how you respond. <a href="https://docs.n8n.io/nodes/n8n-nodes-base.respondToWebhook" target="_blank">More details</a>',
+				displayName:
+					'Insert a \'Respond to Webhook\' node to control when and how you respond. <a href="https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.respondtowebhook/" target="_blank">More details</a>',
 				name: 'webhookNotice',
 				type: 'notice',
 				displayOptions: {
 					show: {
-						responseMode: [
-							'responseNode',
-						],
+						responseMode: ['responseNode'],
 					},
 				},
 				default: '',
 			},
 			{
-				displayName: 'Response Code',
-				name: 'responseCode',
-				type: 'number',
+				displayName:
+					'Insert a node that supports streaming (e.g. \'AI Agent\') and enable streaming to stream directly to the response while the workflow is executed. <a href="https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.respondtowebhook/" target="_blank">More details</a>',
+				name: 'webhookStreamingNotice',
+				type: 'notice',
 				displayOptions: {
+					show: {
+						responseMode: ['streaming'],
+					},
+				},
+				default: '',
+			},
+			{
+				...responseCodeProperty,
+				displayOptions: {
+					show: {
+						'@version': [1, 1.1],
+					},
 					hide: {
-						responseMode: [
-							'responseNode',
-						],
+						responseMode: ['responseNode'],
 					},
 				},
-				typeOptions: {
-					minValue: 100,
-					maxValue: 599,
-				},
-				default: 200,
-				description: 'The HTTP Response code to return',
 			},
+			responseDataProperty,
+			responseBinaryPropertyNameProperty,
 			{
-				displayName: 'Response Data',
-				name: 'responseData',
-				type: 'options',
+				displayName:
+					'If you are sending back a response, add a "Content-Type" response header with the appropriate value to avoid unexpected behavior',
+				name: 'contentTypeNotice',
+				type: 'notice',
+				default: '',
 				displayOptions: {
 					show: {
-						responseMode: [
-							'lastNode',
-						],
+						responseMode: ['onReceived'],
 					},
 				},
-				options: [
-					{
-						name: 'All Entries',
-						value: 'allEntries',
-						description: 'Returns all the entries of the last node. Always returns an array.',
-					},
-					{
-						name: 'First Entry JSON',
-						value: 'firstEntryJson',
-						description: 'Returns the JSON data of the first entry of the last node. Always returns a JSON object.',
-					},
-					{
-						name: 'First Entry Binary',
-						value: 'firstEntryBinary',
-						description: 'Returns the binary data of the first entry of the last node. Always returns a binary file.',
-					},
-				],
-				default: 'firstEntryJson',
-				description: 'What data should be returned. If it should return all items as an array or only the first item as object.',
 			},
+
 			{
-				displayName: 'Property Name',
-				name: 'responseBinaryPropertyName',
-				type: 'string',
-				required: true,
-				default: 'data',
-				displayOptions: {
-					show: {
-						responseData: [
-							'firstEntryBinary',
-						],
+				...optionsProperty,
+				options: [...(optionsProperty.options as INodeProperties[]), responseCodeOption].sort(
+					(a, b) => {
+						const nameA = a.displayName.toUpperCase();
+						const nameB = b.displayName.toUpperCase();
+						if (nameA < nameB) return -1;
+						if (nameA > nameB) return 1;
+						return 0;
 					},
-				},
-				description: 'Name of the binary property to return',
-			},
-			{
-				displayName: 'Options',
-				name: 'options',
-				type: 'collection',
-				placeholder: 'Add Option',
-				default: {},
-				options: [
-					{
-						displayName: 'Binary Data',
-						name: 'binaryData',
-						type: 'boolean',
-						displayOptions: {
-							show: {
-								'/httpMethod': [
-									'POST',
-								],
-							},
-						},
-						default: false,
-						description: 'Set to true if webhook will receive binary data.',
-					},
-					{
-						displayName: 'Binary Property',
-						name: 'binaryPropertyName',
-						type: 'string',
-						default: 'data',
-						required: true,
-						displayOptions: {
-							show: {
-								binaryData: [
-									true,
-								],
-							},
-						},
-						description: `Name of the binary property to write the data of
-									the received file to. If the data gets received via "Form-Data Multipart"
-									it will be the prefix and a number starting with 0 will be attached to it.`,
-					},
-					{
-						displayName: 'Response Data',
-						name: 'responseData',
-						type: 'string',
-						displayOptions: {
-							show: {
-								'/responseMode': [
-									'onReceived',
-								],
-							},
-						},
-						default: '',
-						placeholder: 'success',
-						description: 'Custom response data to send.',
-					},
-					{
-						displayName: 'Response Content-Type',
-						name: 'responseContentType',
-						type: 'string',
-						displayOptions: {
-							show: {
-								'/responseData': [
-									'firstEntryJson',
-								],
-								'/responseMode': [
-									'lastNode',
-								],
-							},
-						},
-						default: '',
-						placeholder: 'application/xml',
-						description: 'Set a custom content-type to return if another one as the "application/json" should be returned.',
-					},
-					{
-						displayName: 'Response Headers',
-						name: 'responseHeaders',
-						placeholder: 'Add Response Header',
-						description: 'Add headers to the webhook response.',
-						type: 'fixedCollection',
-						typeOptions: {
-							multipleValues: true,
-						},
-						default: {},
-						options: [
-							{
-								name: 'entries',
-								displayName: 'Entries',
-								values: [
-									{
-										displayName: 'Name',
-										name: 'name',
-										type: 'string',
-										default: '',
-										description: 'Name of the header.',
-									},
-									{
-										displayName: 'Value',
-										name: 'value',
-										type: 'string',
-										default: '',
-										description: 'Value of the header.',
-									},
-								],
-							},
-						],
-					},
-					{
-						displayName: 'Property Name',
-						name: 'responsePropertyName',
-						type: 'string',
-						displayOptions: {
-							show: {
-								'/responseData': [
-									'firstEntryJson',
-								],
-								'/responseMode': [
-									'lastNode',
-								],
-							},
-						},
-						default: 'data',
-						description: 'Name of the property to return the data of instead of the whole JSON.',
-					},
-					{
-						displayName: 'Raw Body',
-						name: 'rawBody',
-						type: 'boolean',
-						displayOptions: {
-							hide: {
-								binaryData: [
-									true,
-								],
-							},
-						},
-						default: false,
-						description: 'Raw body (binary)',
-					},
-				],
+				),
 			},
 		],
 	};
 
-	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
-		const authentication = this.getNodeParameter('authentication') as string;
-		const options = this.getNodeParameter('options', {}) as IDataObject;
-		const req = this.getRequestObject();
-		const resp = this.getResponseObject();
-		const headers = this.getHeaderData();
-		const realm = 'Webhook';
+	methods = {
+		loadOptions: {
+			listTrustedSources: listBearerTrustedSources,
+		},
+	};
 
-		if (authentication === 'basicAuth') {
-			// Basic authorization is needed to call webhook
-			const httpBasicAuth = await this.getCredentials('httpBasicAuth');
+	async webhook(context: IWebhookFunctions): Promise<IWebhookResponseData> {
+		const { typeVersion: nodeVersion, type: nodeType } = context.getNode();
+		const responseMode = context.getNodeParameter('responseMode', 'onReceived') as string;
 
-			if (httpBasicAuth === undefined || !httpBasicAuth.user || !httpBasicAuth.password) {
-				// Data is not defined on node so can not authenticate
-				return authorizationError(resp, realm, 500, 'No authentication data defined on node!');
+		if (nodeVersion >= 2 && nodeType === 'n8n-nodes-base.webhook') {
+			checkResponseModeConfiguration(context);
+		}
+
+		const options = context.getNodeParameter('options', {}) as {
+			binaryData: boolean;
+			ignoreBots: boolean;
+			rawBody: boolean;
+			responseData?: string;
+			ipWhitelist?: string;
+			oauthClient?: N8nOAuth2BrowserFlowMode;
+		};
+		const req = context.getRequestObject();
+		const resp = context.getResponseObject();
+		const requestMethod = context.getRequestObject().method;
+
+		if (!isIpAllowed(options.ipWhitelist, req.ips, req.ip)) {
+			resp.writeHead(403);
+			resp.end('IP is not allowed to access the webhook!');
+			return { noWebhookResponse: true };
+		}
+
+		let validationData: IDataObject | undefined;
+		try {
+			if (options.ignoreBots && isbot(req.headers['user-agent']))
+				throw new WebhookAuthorizationError(
+					403,
+					'Request rejected because the user agent matches a bot. Change the user agent or disable "Ignore Bots".',
+				);
+			if (context.getNodeParameter('authentication', 'none') === 'n8nOAuth2') {
+				// Two-step n8n user-auth flow: (1) validate the bearer token and resolve
+				// the caller to an n8n user, then (2) seed the execution context so the
+				// run happens as that user (merging their private credentials). The method
+				// being served selects the resource, since disjoint-method triggers can
+				// share a path; take it from the request rather than the `httpMethod`
+				// parameter, which is an expression that can resolve differently from the
+				// rows written at activation time.
+				const authResult = await n8nOAuth2Auth(context, {
+					realm: 'n8n Webhook',
+					method: req.method,
+					// Same version-gated default as the resolvers' `isFirstParty`, so the
+					// runtime redirect and the AS's virtual client can't disagree.
+					browserFlow: resolveOAuthClientMode(options.oauthClient, nodeVersion),
+				});
+				if (authResult === 'handled') {
+					// Token missing/invalid: the helper already sent the response.
+					return { noWebhookResponse: true };
+				}
+				// Seal the resolved user, so the run never re-verifies the token and still
+				// resolves credentials after the token expired (e.g. after a long Wait).
+				await context.establishTriggerIdentity(
+					authResult.token,
+					authResult.resource,
+					authResult.user.id,
+				);
+			} else {
+				validationData = await this.validateAuth(context);
 			}
-
-			const basicAuthData = basicAuth(req);
-
-			if (basicAuthData === undefined) {
-				// Authorization data is missing
-				return authorizationError(resp, realm, 401);
+		} catch (error) {
+			if (error instanceof WebhookAuthorizationError) {
+				resp.writeHead(error.responseCode, { 'WWW-Authenticate': 'Basic realm="Webhook"' });
+				resp.end(error.message);
+				return { noWebhookResponse: true };
 			}
+			throw error;
+		}
 
-			if (basicAuthData.name !== httpBasicAuth!.user || basicAuthData.pass !== httpBasicAuth!.password) {
-				// Provided authentication data is wrong
-				return authorizationError(resp, realm, 403);
-			}
-		} else if (authentication === 'headerAuth') {
-			// Special header with value is needed to call webhook
-			const httpHeaderAuth = await this.getCredentials('httpHeaderAuth');
-
-			if (httpHeaderAuth === undefined || !httpHeaderAuth.name || !httpHeaderAuth.value) {
-				// Data is not defined on node so can not authenticate
-				return authorizationError(resp, realm, 500, 'No authentication data defined on node!');
-			}
-			const headerName = (httpHeaderAuth.name as string).toLowerCase();
-			const headerValue = (httpHeaderAuth.value as string);
-
-			if (!headers.hasOwnProperty(headerName) || (headers as IDataObject)[headerName] !== headerValue) {
-				// Provided authentication data is wrong
-				return authorizationError(resp, realm, 403);
+		const node = context.getNode();
+		const rawOptions = node.parameters?.options as { onlyRunIf?: unknown } | undefined;
+		const rawOnlyRunIf = rawOptions?.onlyRunIf;
+		if (typeof rawOnlyRunIf === 'string' && rawOnlyRunIf.startsWith('=')) {
+			try {
+				const result = context.evaluateExpression(rawOnlyRunIf.slice(1), 0);
+				if (!result) return {};
+			} catch (error) {
+				context.logger.warn(
+					`Webhook "Only Run If" expression failed to evaluate; allowing request through. ${(error as Error).message}`,
+					{ nodeName: node.name },
+				);
 			}
 		}
 
-		// @ts-ignore
-		const mimeType = headers['content-type'] || 'application/json';
-		if (mimeType.includes('multipart/form-data')) {
-			// @ts-ignore
-			const form = new formidable.IncomingForm({ multiples: true });
+		const prepareOutput = setupOutputConnection(context, requestMethod, {
+			jwtPayload: validationData,
+		});
 
-			return new Promise((resolve, reject) => {
-
-				form.parse(req, async (err, data, files) => {
-					const returnItem: INodeExecutionData = {
-						binary: {},
-						json: {
-							headers,
-							params: this.getParamsData(),
-							query: this.getQueryData(),
-							body: data,
-						},
-					};
-
-					let count = 0;
-					for (const xfile of Object.keys(files)) {
-						const processFiles: formidable.File[] = [];
-						let multiFile = false;
-						if (Array.isArray(files[xfile])) {
-							processFiles.push(...files[xfile] as formidable.File[]);
-							multiFile = true;
-						} else {
-							processFiles.push(files[xfile] as formidable.File);
-						}
-
-						let fileCount = 0;
-						for (const file of processFiles) {
-							let binaryPropertyName = xfile;
-							if (binaryPropertyName.endsWith('[]')) {
-								binaryPropertyName = binaryPropertyName.slice(0, -2);
-							}
-							if (multiFile === true) {
-								binaryPropertyName += fileCount++;
-							}
-							if (options.binaryPropertyName) {
-								binaryPropertyName = `${options.binaryPropertyName}${count}`;
-							}
-
-							const fileJson = file.toJSON() as unknown as IDataObject;
-							const fileContent = await fs.promises.readFile(file.path);
-
-							returnItem.binary![binaryPropertyName] = await this.helpers.prepareBinaryData(Buffer.from(fileContent), fileJson.name as string, fileJson.type as string);
-
-							count += 1;
-						}
-					}
-					resolve({
-						workflowData: [
-							[
-								returnItem,
-							],
-						],
-					});
-				});
-
-			});
+		if (options.binaryData) {
+			return await this.handleBinaryData(context, prepareOutput);
 		}
 
-		if (options.binaryData === true) {
-			return new Promise((resolve, reject) => {
-				const binaryPropertyName = options.binaryPropertyName || 'data';
-				const data: Buffer[] = [];
+		if (req.contentType === 'multipart/form-data') {
+			return await handleFormData(context, prepareOutput);
+		}
 
-				req.on('data', (chunk) => {
-					data.push(chunk);
-				});
+		if (nodeVersion > 1 && !req.body && !options.rawBody) {
+			try {
+				return await this.handleBinaryData(context, prepareOutput);
+			} catch (error) {}
+		}
 
-				req.on('end', async () => {
-					const returnItem: INodeExecutionData = {
-						binary: {},
-						json: {
-							headers,
-							params: this.getParamsData(),
-							query: this.getQueryData(),
-							body: this.getBodyData(),
-						},
-					};
-
-					returnItem.binary![binaryPropertyName as string] = await this.helpers.prepareBinaryData(Buffer.concat(data));
-
-					return resolve({
-						workflowData: [
-							[
-								returnItem,
-							],
-						],
-					});
-				});
-
-				req.on('error', (error) => {
-					throw new NodeOperationError(this.getNode(), error);
-				});
-			});
+		if (options.rawBody && !req.rawBody) {
+			await req.readRawBody();
 		}
 
 		const response: INodeExecutionData = {
 			json: {
-				headers,
-				params: this.getParamsData(),
-				query: this.getQueryData(),
-				body: this.getBodyData(),
+				headers: req.headers,
+				params: req.params,
+				query: req.query,
+				body: req.body,
 			},
+			binary: options.rawBody
+				? {
+						data: {
+							data: (req.rawBody ?? '').toString(BINARY_ENCODING),
+							mimeType: req.contentType ?? 'application/json',
+						},
+					}
+				: undefined,
 		};
 
-		if (options.rawBody) {
-			response.binary = {
-				data: {
-					// @ts-ignore
-					data: req.rawBody.toString(BINARY_ENCODING),
-					mimeType,
-				},
+		if (responseMode === 'streaming') {
+			const res = context.getResponseObject();
+
+			// Set up streaming response headers
+			res.writeHead(200, {
+				'Content-Type': 'application/json; charset=utf-8',
+				'Transfer-Encoding': 'chunked',
+				'Cache-Control': 'no-cache',
+				Connection: 'keep-alive',
+			});
+
+			// Flush headers immediately
+			res.flushHeaders();
+
+			return {
+				noWebhookResponse: true,
+				workflowData: prepareOutput(response),
 			};
 		}
 
-		let webhookResponse: string | undefined;
-		if (options.responseData) {
-			webhookResponse = options.responseData as string;
-		}
-
 		return {
-			webhookResponse,
-			workflowData: [
-				[
-					response,
-				],
-			],
+			webhookResponse: options.responseData,
+			workflowData: prepareOutput(response),
 		};
+	}
+
+	private async validateAuth(context: IWebhookFunctions) {
+		return await validateWebhookAuthentication(context, this.authPropertyName);
+	}
+
+	private async handleBinaryData(
+		context: IWebhookFunctions,
+		prepareOutput: (data: INodeExecutionData) => INodeExecutionData[][],
+	): Promise<IWebhookResponseData> {
+		const req = context.getRequestObject();
+		const options = context.getNodeParameter('options', {}) as IDataObject;
+
+		// TODO: create empty binaryData placeholder, stream into that path, and then finalize the binaryData
+		const binaryFile = await tmpFile({ prefix: 'n8n-webhook-' });
+
+		try {
+			await pipeline(req, createWriteStream(binaryFile.path));
+
+			const returnItem: INodeExecutionData = {
+				json: {
+					headers: req.headers,
+					params: req.params,
+					query: req.query,
+					body: {},
+				},
+			};
+
+			const stats = await stat(binaryFile.path);
+			if (stats.size) {
+				const binaryPropertyName = (options.binaryPropertyName ?? 'data') as string;
+				const fileName = req.contentDisposition?.filename ?? uuid();
+				const binaryData = await context.nodeHelpers.copyBinaryFile(
+					binaryFile.path,
+					fileName,
+					req.contentType ?? 'application/octet-stream',
+				);
+				returnItem.binary = { [binaryPropertyName]: binaryData };
+			}
+
+			return { workflowData: prepareOutput(returnItem) };
+		} catch (error) {
+			throw new NodeOperationError(context.getNode(), error as Error);
+		} finally {
+			await binaryFile.cleanup();
+		}
 	}
 }

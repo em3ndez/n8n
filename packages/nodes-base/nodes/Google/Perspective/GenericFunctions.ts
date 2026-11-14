@@ -1,30 +1,27 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
-	NodeApiError,
+	JsonObject,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 export async function googleApiRequest(
 	this: IExecuteFunctions,
 	method: 'POST',
-	endpoint: string,
+	endpoint: RequestPath,
 	body: IDataObject = {},
 ) {
-	const options: OptionsWithUri = {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
 		},
 		method,
 		body,
-		uri: `https://commentanalyzer.googleapis.com${endpoint}`,
+		uri: requestUrl`https://commentanalyzer.googleapis.com${endpoint}`,
 		json: true,
 	};
 
@@ -35,6 +32,6 @@ export async function googleApiRequest(
 	try {
 		return await this.helpers.requestOAuth2.call(this, 'googlePerspectiveOAuth2Api', options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }

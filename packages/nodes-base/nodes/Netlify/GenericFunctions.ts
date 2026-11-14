@@ -1,32 +1,37 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	JsonObject,
+	IRequestOptions,
+	IHttpRequestMethods,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function netlifyApiRequest(this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions, method: string, endpoint: string, body: any = {}, query: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function netlifyApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 
-	const options: OptionsWithUri = {
+	body: any = {},
+	query: IDataObject = {},
+	option: Pick<IRequestOptions, 'resolveWithFullResponse'> = {},
+): Promise<any> {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		headers: {
 			'Content-Type': 'application/json',
 		},
 		qs: query,
 		body,
-		uri: uri || `https://api.netlify.com/api/v1${endpoint}`,
+		uri: requestUrl`https://api.netlify.com/api/v1${endpoint}`,
 		json: true,
 	};
 
-	if (!Object.keys(body).length) {
+	if (!Object.keys(body as IDataObject).length) {
 		delete options.body;
 	}
 
@@ -37,20 +42,22 @@ export async function netlifyApiRequest(this: IHookFunctions | IExecuteFunctions
 	try {
 		const credentials = await this.getCredentials('netlifyApi');
 
-		if (credentials === undefined) {
-			throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-		}
+		options.headers!.Authorization = `Bearer ${credentials.accessToken}`;
 
-		options.headers!['Authorization'] = `Bearer ${credentials.accessToken}`;
-
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function netlifyRequestAllItems(this: IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function netlifyRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -58,12 +65,12 @@ export async function netlifyRequestAllItems(this: IExecuteFunctions | ILoadOpti
 	query.per_page = 100;
 
 	do {
-		responseData = await netlifyApiRequest.call(this, method, endpoint, body, query, undefined, { resolveWithFullResponse: true });
+		responseData = await netlifyApiRequest.call(this, method, endpoint, body, query, {
+			resolveWithFullResponse: true,
+		});
 		query.page++;
-		returnData.push.apply(returnData, responseData.body);
-	} while (
-		responseData.headers.link.includes('next')
-	);
+		returnData.push.apply(returnData, responseData.body as IDataObject[]);
+	} while (responseData.headers.link.includes('next'));
 
 	return returnData;
 }

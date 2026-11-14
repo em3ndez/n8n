@@ -1,43 +1,28 @@
-import {
+import type {
 	IHookFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookResponseData,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	customerIoApiRequest,
-	eventExists,
-} from './GenericFunctions';
-
-interface IEvent {
-	customer?: IDataObject;
-	email?: IDataObject;
-	push?: IDataObject;
-	slack?: IDataObject;
-	sms?: IDataObject;
-	webhook?: IDataObject;
-}
+import { verifySignature } from './CustomerIoTriggerHelpers';
+import { customerIoApiRequest, eventExists, toApiEventName } from './GenericFunctions';
 
 export class CustomerIoTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Customer.io Trigger',
 		name: 'customerIoTrigger',
 		group: ['trigger'],
-		icon: 'file:customerio.svg',
+		icon: { light: 'file:customerio.svg', dark: 'file:customerio.dark.svg' },
 		version: 1,
 		description: 'Starts the workflow on a Customer.io update (Beta)',
 		defaults: {
 			name: 'Customer.io Trigger',
-			color: '#ffcd00',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'customerIoApi',
@@ -59,173 +44,173 @@ export class CustomerIoTrigger implements INodeType {
 				type: 'multiOptions',
 				required: true,
 				default: [],
-				description: 'The events that can trigger the webhook and whether they are enabled.',
+				description: 'The events that can trigger the webhook and whether they are enabled',
 				options: [
 					{
 						name: 'Customer Subscribed',
 						value: 'customer.subscribed',
-						description: 'Whether the webhook is triggered when a list subscriber is added.',
+						description: 'Whether the webhook is triggered when a list subscriber is added',
 					},
 					{
 						name: 'Customer Unsubscribe',
 						value: 'customer.unsubscribed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
 						name: 'Email Attempted',
 						value: 'email.attempted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
 						name: 'Email Bounced',
 						value: 'email.bounced',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email clicked',
+						name: 'Email Clicked',
 						value: 'email.clicked',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email converted',
+						name: 'Email Converted',
 						value: 'email.converted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email delivered',
+						name: 'Email Delivered',
 						value: 'email.delivered',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email drafted',
+						name: 'Email Drafted',
 						value: 'email.drafted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email failed',
+						name: 'Email Failed',
 						value: 'email.failed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email opened',
+						name: 'Email Opened',
 						value: 'email.opened',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email sent',
+						name: 'Email Sent',
 						value: 'email.sent',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Email spammed',
+						name: 'Email Spammed',
 						value: 'email.spammed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push attempted',
+						name: 'Push Attempted',
 						value: 'push.attempted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push bounced',
+						name: 'Push Bounced',
 						value: 'push.bounced',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push clicked',
+						name: 'Push Clicked',
 						value: 'push.clicked',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push delivered',
+						name: 'Push Delivered',
 						value: 'push.delivered',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push drafted',
+						name: 'Push Drafted',
 						value: 'push.drafted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push failed',
+						name: 'Push Failed',
 						value: 'push.failed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push opened',
+						name: 'Push Opened',
 						value: 'push.opened',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Push sent',
+						name: 'Push Sent',
 						value: 'push.sent',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Slack attempted',
+						name: 'Slack Attempted',
 						value: 'slack.attempted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Slack clicked',
+						name: 'Slack Clicked',
 						value: 'slack.clicked',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Slack drafted',
+						name: 'Slack Drafted',
 						value: 'slack.drafted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Slack failed',
+						name: 'Slack Failed',
 						value: 'slack.failed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'Slack sent',
+						name: 'Slack Sent',
 						value: 'slack.sent',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS attempted',
+						name: 'SMS Attempted',
 						value: 'sms.attempted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS bounced',
+						name: 'SMS Bounced',
 						value: 'sms.bounced',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS clicked',
+						name: 'SMS Clicked',
 						value: 'sms.clicked',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS delivered',
+						name: 'SMS Delivered',
 						value: 'sms.delivered',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS drafted',
+						name: 'SMS Drafted',
 						value: 'sms.drafted',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS failed',
+						name: 'SMS Failed',
 						value: 'sms.failed',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 					{
-						name: 'SMS sent',
+						name: 'SMS Sent',
 						value: 'sms.sent',
-						description: 'Whether the webhook is triggered when a list member unsubscribes.',
+						description: 'Whether the webhook is triggered when a list member unsubscribes',
 					},
 				],
 			},
 		],
 	};
-	// @ts-ignore (because of request)
+
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -235,17 +220,25 @@ export class CustomerIoTrigger implements INodeType {
 
 				const currentEvents = this.getNodeParameter('events', []) as string[];
 
-				const endpoint = '/reporting_webhooks';
+				const endpoint = requestPath`/reporting_webhooks`;
 
-				let { reporting_webhooks: webhooks } = await customerIoApiRequest.call(this, 'GET', endpoint, {}, 'beta');
+				let { reporting_webhooks: webhooks } = await customerIoApiRequest.call(
+					this,
+					'GET',
+					endpoint,
+					{},
+					'app',
+				);
 
 				if (webhooks === null) {
 					webhooks = [];
 				}
 
 				for (const webhook of webhooks) {
-					if (webhook.endpoint === webhookUrl &&
-						eventExists(currentEvents, webhook.events)) {
+					if (
+						webhook.endpoint === webhookUrl &&
+						eventExists(currentEvents, webhook.events as string[])
+					) {
 						webhookData.webhookId = webhook.id;
 						return true;
 					}
@@ -254,48 +247,18 @@ export class CustomerIoTrigger implements INodeType {
 				return false;
 			},
 			async create(this: IHookFunctions): Promise<boolean> {
-				let webhook;
 				const webhookUrl = this.getNodeWebhookUrl('default');
 				const events = this.getNodeParameter('events', []) as string[];
 
-				const endpoint = '/reporting_webhooks';
+				const endpoint = requestPath`/reporting_webhooks`;
 
-				const data: IEvent = {
-					customer: {},
-					email: {},
-					push: {},
-					slack: {},
-					sms: {},
-					webhook: {},
-				};
-
-				for (const event of events) {
-					const option = event.split('.')[1];
-					if (event.startsWith('customer')) {
-						data.customer![option] = true;
-					}
-					if (event.startsWith('email')) {
-						data.email![option] = true;
-					}
-					if (event.startsWith('push')) {
-						data.push![option] = true;
-					}
-					if (event.startsWith('slack')) {
-						data.slack![option] = true;
-					}
-					if (event.startsWith('sms')) {
-						data.sms![option] = true;
-					}
-					if (event.startsWith('webhook')) {
-						data.webhook![option] = true;
-					}
-				}
 				const body = {
+					name: `n8n webhook - ${webhookUrl}`,
 					endpoint: webhookUrl,
-					events: data,
+					events: events.map(toApiEventName),
 				};
 
-				webhook = await customerIoApiRequest.call(this, 'POST', endpoint, body, 'beta');
+				const webhook = await customerIoApiRequest.call(this, 'POST', endpoint, body, 'app');
 
 				const webhookData = this.getWorkflowStaticData('node');
 				webhookData.webhookId = webhook.id as string;
@@ -305,9 +268,9 @@ export class CustomerIoTrigger implements INodeType {
 				const webhookData = this.getWorkflowStaticData('node');
 
 				if (webhookData.webhookId !== undefined) {
-					const endpoint = `/reporting_webhooks/${webhookData.webhookId}`;
+					const endpoint = requestPath`/reporting_webhooks/${webhookData.webhookId}`;
 					try {
-						await customerIoApiRequest.call(this, 'DELETE', endpoint, {}, 'beta');
+						await customerIoApiRequest.call(this, 'DELETE', endpoint, {}, 'app');
 					} catch (error) {
 						return false;
 					}
@@ -319,11 +282,18 @@ export class CustomerIoTrigger implements INodeType {
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		const isSignatureValid = await verifySignature.call(this);
+		if (!isSignatureValid) {
+			const res = this.getResponseObject();
+			res.status(401).send('Unauthorized').end();
+			return {
+				noWebhookResponse: true,
+			};
+		}
+
 		const bodyData = this.getBodyData();
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(bodyData),
-			],
+			workflowData: [this.helpers.returnJsonArray(bodyData)],
 		};
 	}
 }

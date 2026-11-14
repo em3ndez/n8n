@@ -1,5 +1,5 @@
-
 export interface IPost {
+	date?: string;
 	author?: number;
 	id?: number;
 	title?: string;
@@ -11,6 +11,7 @@ export interface IPost {
 	ping_status?: string;
 	format?: string;
 	sticky?: boolean;
+	template?: string;
 	categories?: number[];
 	tags?: number[];
 }

@@ -1,32 +1,63 @@
 import {
-	IExecuteFunctions,
-	IHookFunctions,
-} from 'n8n-core';
-import { NodeApiError, NodeOperationError, } from 'n8n-workflow';
+	NodeOperationError,
+	requestPath,
+	requestUrl,
+	type IExecuteFunctions,
+	type IHookFunctions,
+	type IHttpRequestMethods,
+	type IRequestOptions,
+	type IDataObject,
+	type RequestPath,
+} from 'n8n-workflow';
 
-import {
-	OptionsWithUri,
-} from 'request';
+export function webDavPath(path: string): RequestPath {
+	return path
+		.split('/')
+		.reduce(
+			(parent, segment) =>
+				segment === '' ? requestPath`${parent}/` : requestPath`${parent}/${segment}`,
+			requestPath``,
+		);
+}
 
 /**
  * Make an API request to NextCloud
  *
- * @param {IHookFunctions} this
- * @param {string} method
- * @param {string} url
- * @param {object} body
- * @returns {Promise<any>}
  */
-export async function nextCloudApiRequest(this: IHookFunctions | IExecuteFunctions, method: string, endpoint: string, body: object | string | Buffer, headers?: object, encoding?: null | undefined, query?: object): Promise<any> { // tslint:disable-line:no-any
-	const resource = this.getNodeParameter('resource', 0);
-	const operation = this.getNodeParameter('operation', 0);
+export async function nextCloudApiRequest(
+	this: IHookFunctions | IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: object | string | Buffer,
+	headers?: IDataObject,
+	encoding?: null,
+	query?: IDataObject,
+	useWebDavEndpoint: boolean = true,
+) {
+	const authenticationMethod = this.getNodeParameter('authentication', 0);
 
-	const options: OptionsWithUri = {
+	let credentials;
+
+	if (authenticationMethod === 'accessToken') {
+		credentials = await this.getCredentials<{ webDavUrl: string }>('nextCloudApi');
+	} else {
+		credentials = await this.getCredentials<{ webDavUrl: string }>('nextCloudOAuth2Api');
+	}
+
+	// Validate webDavUrl to catch credential corruption (empty, malformed, or no hostname etc.)
+	const webDavUrl = credentials.webDavUrl ?? '';
+	if (!URL.canParse(webDavUrl) || !/^https?:\/\//.test(webDavUrl)) {
+		throw new NodeOperationError(
+			this.getNode(),
+			`Invalid WebDAV URL in credentials: "${webDavUrl}". The URL must start with https:// or http://. Please check your Nextcloud credentials.`,
+		);
+	}
+
+	const options: Omit<IRequestOptions, 'uri' | 'url' | 'baseURL'> = {
 		headers,
 		method,
 		body,
 		qs: query ?? {},
-		uri: '',
 		json: false,
 	};
 
@@ -34,41 +65,32 @@ export async function nextCloudApiRequest(this: IHookFunctions | IExecuteFunctio
 		options.encoding = null;
 	}
 
-	const authenticationMethod = this.getNodeParameter('authentication', 0);
+	// For non-WebDAV requests, strip the WebDAV suffix while preserving any subpath prefix.
+	const requestOptions = {
+		...options,
+		uri: useWebDavEndpoint
+			? requestUrl`${webDavUrl}${endpoint}`
+			: requestUrl`${webDavUrl.replace(/\/remote\.php\/webdav\/?$/, '')}/${endpoint}`,
+	};
 
-	try {
-		if (authenticationMethod === 'accessToken') {
-			const credentials = await this.getCredentials('nextCloudApi');
-			if (credentials === undefined) {
-				throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-			}
+	const credentialType =
+		authenticationMethod === 'accessToken' ? 'nextCloudApi' : 'nextCloudOAuth2Api';
 
-			options.auth = {
-				user: credentials.user as string,
-				pass: credentials.password as string,
-			};
+	const response = await this.helpers.requestWithAuthentication.call(
+		this,
+		credentialType,
+		requestOptions,
+	);
 
-			options.uri = `${credentials.webDavUrl}/${encodeURI(endpoint)}`;
-
-			if (resource === 'user' || operation === 'share') {
-				options.uri = options.uri.replace('/remote.php/webdav', '');
-			}
-			return await this.helpers.request(options);
-		} else {
-			const credentials = await this.getCredentials('nextCloudOAuth2Api');
-			if (credentials === undefined) {
-				throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-			}
-
-			options.uri = `${credentials.webDavUrl}/${encodeURI(endpoint)}`;
-
-			if (resource === 'user' && operation === 'create') {
-				options.uri = options.uri.replace('/remote.php/webdav', '');
-			}
-
-			return await this.helpers.requestOAuth2!.call(this, 'nextCloudOAuth2Api', options);
-		}
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+	if (typeof response === 'string' && response.includes('<b>Fatal error</b>')) {
+		throw new NodeOperationError(
+			this.getNode(),
+			"NextCloud responded with a 'Fatal error', check description for more details",
+			{
+				description: `Server response:\n${response}`,
+			},
+		);
 	}
+
+	return response;
 }

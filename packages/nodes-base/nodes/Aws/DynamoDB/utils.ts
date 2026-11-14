@@ -1,9 +1,8 @@
-import {
-	IDataObject,
-	INodeExecutionData,
-} from 'n8n-workflow';
+import type { IDataObject } from 'n8n-workflow';
+import { assert } from 'n8n-workflow';
+import { UserError } from '@n8n/errors';
 
-import {
+import type {
 	AdjustedPutItem,
 	AttributeValueType,
 	EAttributeValueType,
@@ -14,9 +13,10 @@ import {
 	PutItemUi,
 } from './types';
 
-const addColon = (attribute: string) => attribute = attribute.charAt(0) === ':' ? attribute : `:${attribute}`;
+const addColon = (attribute: string) =>
+	(attribute = attribute.charAt(0) === ':' ? attribute : `:${attribute}`);
 
-const addPound = (key: string) => key = key.charAt(0) === '#' ? key : `#${key}`;
+const addPound = (key: string) => (key = key.charAt(0) === '#' ? key : `#${key}`);
 
 export function adjustExpressionAttributeValues(eavUi: IAttributeValueUi[]) {
 	const eav: IAttributeValue = {};
@@ -29,18 +29,16 @@ export function adjustExpressionAttributeValues(eavUi: IAttributeValueUi[]) {
 }
 
 export function adjustExpressionAttributeName(eanUi: IAttributeNameUi[]) {
-
-	// tslint:disable-next-line: no-any
-	const ean: { [key: string]: any } = {};
+	const ean: { [key: string]: string } = {};
 
 	eanUi.forEach(({ key, value }) => {
-		ean[addPound(key)] = { value } as IAttributeValueValue;
+		ean[addPound(key)] = value;
 	});
 
 	return ean;
 }
 
-export function adjustPutItem(putItemUi: PutItemUi) {
+export function adjustPutItem(putItemUi: PutItemUi, autoParseNumbers = true) {
 	const adjustedPutItem: AdjustedPutItem = {};
 
 	Object.entries(putItemUi).forEach(([attribute, value]) => {
@@ -50,11 +48,10 @@ export function adjustPutItem(putItemUi: PutItemUi) {
 			type = 'BOOL';
 		} else if (typeof value === 'object' && !Array.isArray(value) && value !== null) {
 			type = 'M';
-			// @ts-ignore
-		} else if (isNaN(value)) {
-			type = 'S';
-		} else {
+		} else if (autoParseNumbers ? !isNaN(Number(value)) : typeof value === 'number') {
 			type = 'N';
+		} else {
+			type = 'S';
 		}
 
 		adjustedPutItem[attribute] = { [type]: value.toString() };
@@ -68,13 +65,15 @@ export function simplify(item: IAttributeValue): IDataObject {
 
 	for (const [attribute, value] of Object.entries(item)) {
 		const [type, content] = Object.entries(value)[0] as [AttributeValueType, string];
+		//nedded as simplify is used in decodeItem
+
 		output[attribute] = decodeAttribute(type, content);
 	}
 
 	return output;
 }
 
-function decodeAttribute(type: AttributeValueType, attribute: string) {
+function decodeAttribute(type: AttributeValueType, attribute: string | IAttributeValue) {
 	switch (type) {
 		case 'BOOL':
 			return Boolean(attribute);
@@ -85,32 +84,23 @@ function decodeAttribute(type: AttributeValueType, attribute: string) {
 		case 'SS':
 		case 'NS':
 			return attribute;
+		case 'M':
+			assert(
+				typeof attribute === 'object' && !Array.isArray(attribute) && attribute !== null,
+				'Attribute must be an object',
+			);
+			return simplify(attribute);
 		default:
 			return null;
 	}
 }
 
-// tslint:disable-next-line: no-any
 export function validateJSON(input: any): object {
 	try {
-		return JSON.parse(input);
+		return JSON.parse(input as string);
 	} catch (error) {
-		throw new Error('Items must be a valid JSON');
+		throw new UserError('Items must be a valid JSON', { level: 'warning' });
 	}
-}
-
-export function copyInputItem(item: INodeExecutionData, properties: string[]): IDataObject {
-	// Prepare the data to insert and copy it to be returned
-	let newItem: IDataObject;
-		newItem = {};
-	for (const property of properties) {
-		if (item.json[property] === undefined) {
-			newItem[property] = null;
-		} else {
-			newItem[property] = JSON.parse(JSON.stringify(item.json[property]));
-		}
-	}
-	return newItem;
 }
 
 export function mapToAttributeValues(item: IDataObject): void {

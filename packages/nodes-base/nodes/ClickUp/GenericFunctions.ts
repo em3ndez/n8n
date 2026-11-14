@@ -1,31 +1,34 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
 	IOAuth2Options,
-	NodeApiError,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
+export async function clickupApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions | IWebhookFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
 
-export async function clickupApiRequest(this: IHookFunctions | IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions | IWebhookFunctions, method: string, resource: string, body: any = {}, qs: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-	const options: OptionsWithUri = {
+	body: any = {},
+	qs: IDataObject = {},
+): Promise<any> {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		headers: {
 			'Content-Type': 'application/json',
 		},
 		method,
 		qs,
 		body,
-		uri: uri || `https://api.clickup.com/api/v2${resource}`,
+		uri: requestUrl`https://api.clickup.com/api/v2${resource}`,
 		json: true,
 	};
 
@@ -33,27 +36,36 @@ export async function clickupApiRequest(this: IHookFunctions | IExecuteFunctions
 		const authenticationMethod = this.getNodeParameter('authentication', 0) as string;
 
 		if (authenticationMethod === 'accessToken') {
-
-			const credentials = await this.getCredentials('clickUpApi');
-
-			options.headers!['Authorization'] = credentials?.accessToken;
-			return await this.helpers.request!(options);
-
+			return await this.helpers.requestWithAuthentication.call(this, 'clickUpApi', options);
 		} else {
 			const oAuth2Options: IOAuth2Options = {
 				keepBearer: false,
 				tokenType: 'Bearer',
+				// ClickUp's access token doesn't expire and
+				// ClickUp does not return refresh tokens
+				skipTokenRefresh: true,
 			};
-			// @ts-ignore
-			return await this.helpers.requestOAuth2!.call(this, 'clickUpOAuth2Api', options, oAuth2Options);
+			return await this.helpers.requestOAuth2.call(
+				this,
+				'clickUpOAuth2Api',
+				options,
+				oAuth2Options,
+			);
 		}
-	} catch(error) {
-		throw new NodeApiError(this.getNode(), error);
+	} catch (error) {
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function clickupApiRequestAllItems(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, propertyName: string, method: string, resource: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function clickupApiRequestAllItems(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -61,19 +73,17 @@ export async function clickupApiRequestAllItems(this: IHookFunctions | IExecuteF
 
 	do {
 		responseData = await clickupApiRequest.call(this, method, resource, body, query);
-		returnData.push.apply(returnData, responseData[propertyName]);
+		returnData.push.apply(returnData, responseData[propertyName] as IDataObject[]);
 		query.page++;
-		if (query.limit && query.limit <= returnData.length) {
+		const limit = query.limit as number | undefined;
+		if (limit && limit <= returnData.length) {
 			return returnData;
 		}
-	} while (
-		responseData[propertyName] &&
-		responseData[propertyName].length !== 0
-	);
+	} while (responseData[propertyName] && responseData[propertyName].length !== 0);
 	return returnData;
 }
 
-export function validateJSON(json: string | undefined): any { // tslint:disable-line:no-any
+export function validateJSON(json: string | undefined): any {
 	let result;
 	try {
 		result = JSON.parse(json!);

@@ -1,34 +1,80 @@
-import { OptionsWithUri } from 'request';
-import {
+import type {
+	IDataObject,
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
+	IHttpRequestMethods,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-import { IDataObject, NodeApiError, NodeOperationError, } from 'n8n-workflow';
+	IRequestOptions,
+	JsonObject,
+	RequestPath,
+	WithRequestTarget,
+} from 'n8n-workflow';
+import {
+	NodeApiError,
+	NodeOperationError,
+	decodePathValue,
+	requestPath,
+	requestUrl,
+} from 'n8n-workflow';
 
-export async function codaApiRequest(this: IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, qs: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export const toPathValue = (version: number, value: string) =>
+	version < 1.2 ? decodePathValue(value) : value;
+
+export const currentPathParam = (context: ILoadOptionsFunctions, name: string) =>
+	toPathValue(context.getNode().typeVersion, context.getCurrentNodeParameter(name) as string);
+
+export async function codaApiRequest(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+
+	body: any = {},
+	qs: IDataObject = {},
+): Promise<any> {
 	const credentials = await this.getCredentials('codaApi');
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
 
-	let options: OptionsWithUri = {
-		headers: { 'Authorization': `Bearer ${credentials.accessToken}`},
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
+		headers: {
+			Authorization: `Bearer ${credentials.accessToken}`,
+		},
 		method,
 		qs,
 		body,
-		uri: uri ||`https://coda.io/apis/v1${resource}`,
+		uri: requestUrl`https://coda.io/apis/v1${resource}`,
 		json: true,
 	};
-	options = Object.assign({}, options, option);
-	if (Object.keys(options.body).length === 0) {
+	if (Object.keys(options.body as IDataObject).length === 0) {
 		delete options.body;
 	}
 
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
+	}
+}
+
+const API_PATH_PREFIX = '/apis/v1/';
+
+const searchParamsToQuery = (searchParams: URLSearchParams) => {
+	const qs: IDataObject = {};
+	for (const key of new Set(searchParams.keys())) {
+		const values = searchParams.getAll(key);
+		qs[key] = values.length > 1 ? values : values[0];
+	}
+	return qs;
+};
+
+function parseNextPageLink(context: IExecuteFunctions | ILoadOptionsFunctions, link: string) {
+	try {
+		const url = new URL(link);
+		if (!url.pathname.startsWith(API_PATH_PREFIX)) throw new Error('Unexpected path');
+		const segments = url.pathname.slice(API_PATH_PREFIX.length).split('/').map(decodeURIComponent);
+		return {
+			resource: segments.reduce((path, segment) => requestPath`${path}/${segment}`, requestPath``),
+			qs: searchParamsToQuery(url.searchParams),
+		};
+	} catch {
+		throw new NodeOperationError(context.getNode(), 'Unexpected next page link');
 	}
 }
 
@@ -36,25 +82,30 @@ export async function codaApiRequest(this: IExecuteFunctions | IExecuteSingleFun
  * Make an API request to paginated coda endpoint
  * and return all results
  */
-export async function codaApiRequestAllItems(this: IExecuteFunctions | ILoadOptionsFunctions, propertyName: string, method: string, resource: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function codaApiRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
 
 	query.limit = 100;
 
-	let uri: string | undefined;
+	let next: { resource: RequestPath; qs: IDataObject } | undefined = { resource, qs: query };
 
 	do {
-		responseData = await codaApiRequest.call(this, method, resource, body, query, uri);
-		uri = responseData.nextPageLink;
-		// @ts-ignore
-		returnData.push.apply(returnData, responseData[propertyName]);
-	} while (
-		responseData.nextPageLink !== undefined &&
-		responseData.nextPageLink !== ''
-	);
+		responseData = await codaApiRequest.call(this, method, next.resource, body, next.qs);
+		returnData.push.apply(returnData, responseData[propertyName] as IDataObject[]);
+		next = responseData.nextPageLink
+			? parseNextPageLink(this, responseData.nextPageLink as string)
+			: undefined;
+	} while (next);
 
 	return returnData;
 }

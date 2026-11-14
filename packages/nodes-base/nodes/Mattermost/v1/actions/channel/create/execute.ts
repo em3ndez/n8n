@@ -1,21 +1,16 @@
-import {
-	IExecuteFunctions,
-} from 'n8n-core';
+import { requestPath } from 'n8n-workflow';
+import type { IExecuteFunctions, IDataObject, INodeExecutionData } from 'n8n-workflow';
 
-import {
-	IDataObject,
-	INodeExecutionData,
-} from 'n8n-workflow';
+import { apiRequest } from '../../../transport';
 
-import {
-	apiRequest,
-} from '../../../transport';
-
-export async function create(this: IExecuteFunctions, index: number): Promise<INodeExecutionData[]> {
+export async function create(
+	this: IExecuteFunctions,
+	index: number,
+): Promise<INodeExecutionData[]> {
 	const body = {} as IDataObject;
 	const qs = {} as IDataObject;
 	const requestMethod = 'POST';
-	const endpoint = 'channels';
+	const endpoint = requestPath`channels`;
 
 	const type = this.getNodeParameter('type', index) as string;
 
@@ -26,5 +21,5 @@ export async function create(this: IExecuteFunctions, index: number): Promise<IN
 
 	const responseData = await apiRequest.call(this, requestMethod, endpoint, body, qs);
 
-	return this.helpers.returnJsonArray(responseData);
+	return this.helpers.returnJsonArray(responseData as IDataObject[]);
 }

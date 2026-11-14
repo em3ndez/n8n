@@ -1,32 +1,38 @@
-import { IExecuteFunctions } from 'n8n-core';
-import {
+import type {
+	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-
+import { NodeConnectionTypes } from 'n8n-workflow';
 
 export class NoOp implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'No Operation, do nothing',
 		name: 'noOp',
-		icon: 'fa:arrow-right',
+		icon: 'node:no-operation',
+		iconColor: 'neutral',
 		group: ['organization'],
 		version: 1,
 		description: 'No Operation',
 		defaults: {
-			name: 'NoOp',
-			color: '#b0b0b0',
+			name: 'No Operation, do nothing',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		properties: [
+			{
+				displayName: 'Empty Group Anchor',
+				name: 'emptyGroupAnchor',
+				type: 'hidden',
+				default: false,
+			},
 		],
 	};
 
-	execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 
-		return this.prepareOutputData(items);
+		return [items];
 	}
 }

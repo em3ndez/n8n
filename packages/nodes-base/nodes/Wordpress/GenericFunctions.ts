@@ -1,52 +1,93 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
-	IExecuteSingleFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	RequestUrl,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function wordpressApiRequest(this: IExecuteFunctions | IExecuteSingleFunctions | ILoadOptionsFunctions, method: string, resource: string, body: any = {}, qs: IDataObject = {}, uri?: string, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-	const credentials = await this.getCredentials('wordpressApi');
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
+export async function wordpressApiRequest(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+
+	body: any = {},
+	qs: IDataObject = {},
+	option: Pick<IRequestOptions, 'resolveWithFullResponse'> & {
+		uri?: never;
+		url?: never;
+		baseURL?: never;
+	} = {},
+): Promise<any> {
+	const authType = this.getNodeParameter('authType', 0, 'basicAuth') as string;
+	const isOAuth2 = authType === 'oAuth2';
+
+	let uri: RequestUrl;
+	let credentialType: string;
+	let rejectUnauthorized: boolean | undefined;
+
+	if (isOAuth2) {
+		const credentials = await this.getCredentials('wordpressOAuth2Api');
+		credentialType = 'wordpressOAuth2Api';
+		let site = credentials.wordpressSite as string;
+		try {
+			site = new URL(site).hostname;
+		} catch {
+			site = site.split('/')[0];
+		}
+		uri = requestUrl`https://public-api.wordpress.com/wp/v2/sites/${site}${resource}`;
+	} else {
+		const credentials = await this.getCredentials('wordpressApi');
+		credentialType = 'wordpressApi';
+		uri = requestUrl`${credentials.url}/wp-json/wp/v2${resource}`;
+		rejectUnauthorized = !(credentials.allowUnauthorizedCerts as boolean);
 	}
 
-	let options: OptionsWithUri = {
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			'User-Agent': 'n8n',
-		},
-		auth: {
-			user: credentials!.username as string,
-			password: credentials!.password as string,
-		},
+	const headers: IDataObject = {
+		Accept: 'application/json',
+		'Content-Type': 'application/json',
+	};
+	// Some WordPress caching plugins ignore the request method and serve a cached
+	// GET response to writes, which silently returns existing posts instead of creating one.
+	if (!['GET', 'HEAD'].includes(method)) {
+		headers['Cache-Control'] = 'no-cache';
+	}
+
+	let options: WithRequestTarget<IRequestOptions, 'uri'> = {
+		headers,
 		method,
 		qs,
 		body,
-		uri: uri || `${credentials!.url}/wp-json/wp/v2${resource}`,
+		uri,
 		json: true,
 	};
+	if (rejectUnauthorized !== undefined) {
+		options.rejectUnauthorized = rejectUnauthorized;
+	}
 	options = Object.assign({}, options, option);
-	if (Object.keys(options.body).length === 0) {
+	if (Object.keys(options.body as IDataObject).length === 0) {
 		delete options.body;
 	}
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.requestWithAuthentication.call(this, credentialType, options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function wordpressApiRequestAllItems(this: IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, body: any = {}, query: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
+export async function wordpressApiRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 
+	body: any = {},
+	query: IDataObject = {},
+): Promise<any> {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -56,11 +97,14 @@ export async function wordpressApiRequestAllItems(this: IExecuteFunctions | ILoa
 
 	do {
 		query.page++;
-		responseData = await wordpressApiRequest.call(this, method, endpoint, body, query, undefined, { resolveWithFullResponse: true });
-		returnData.push.apply(returnData, responseData.body);
+		responseData = await wordpressApiRequest.call(this, method, endpoint, body, query, {
+			resolveWithFullResponse: true,
+		});
+		returnData.push.apply(returnData, responseData.body as IDataObject[]);
 	} while (
 		responseData.headers['x-wp-totalpages'] !== undefined &&
-		parseInt(responseData.headers['x-wp-totalpages'], 10) !== query.page
+		responseData.headers['x-wp-totalpages'] !== '0' &&
+		parseInt(responseData.headers['x-wp-totalpages'] as string, 10) !== query.page
 	);
 
 	return returnData;

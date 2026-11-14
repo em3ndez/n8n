@@ -1,32 +1,17 @@
 import {
-	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject,
-	INodeExecutionData,
-	INodeType,
-	INodeTypeDescription,
+	type IExecuteFunctions,
+	type IDataObject,
+	type INodeExecutionData,
+	type INodeType,
+	type INodeTypeDescription,
+	NodeConnectionTypes,
+	requestPath,
 } from 'n8n-workflow';
 
-import {
-	smsFields,
-	smsOperations,
-} from './SmsDescription';
-
-import {
-	mmsFields,
-	mmsOperations,
-} from './MmsDescription';
-
-import {
-	callFields,
-	callOperations,
-} from './CallDescription';
-
-import {
-	plivoApiRequest,
-} from './GenericFunctions';
+import { callFields, callOperations } from './CallDescription';
+import { plivoApiRequest } from './GenericFunctions';
+import { mmsFields, mmsOperations } from './MmsDescription';
+import { smsFields, smsOperations } from './SmsDescription';
 
 export class Plivo implements INodeType {
 	description: INodeTypeDescription = {
@@ -39,10 +24,10 @@ export class Plivo implements INodeType {
 		description: 'Send SMS/MMS messages or make phone calls',
 		defaults: {
 			name: 'Plivo',
-			color: '#43A046',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'plivoApi',
@@ -54,12 +39,14 @@ export class Plivo implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Call',
 						value: 'call',
 					},
 					{
+						// eslint-disable-next-line n8n-nodes-base/node-param-resource-with-plural-option
 						name: 'MMS',
 						value: 'mms',
 					},
@@ -70,7 +57,6 @@ export class Plivo implements INodeType {
 				],
 				default: 'sms',
 				required: true,
-				description: 'The resource to operate on.',
 			},
 			...smsOperations,
 			...smsFields,
@@ -85,21 +71,18 @@ export class Plivo implements INodeType {
 		const items = this.getInputData();
 		const returnData: IDataObject[] = [];
 
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
 
 		for (let i = 0; i < items.length; i++) {
-
 			let responseData;
 
 			if (resource === 'sms') {
-
 				// *********************************************************************
 				//                                sms
 				// *********************************************************************
 
 				if (operation === 'send') {
-
 					// ----------------------------------
 					//          sms: send
 					// ----------------------------------
@@ -110,23 +93,19 @@ export class Plivo implements INodeType {
 						text: this.getNodeParameter('message', i) as string,
 					} as IDataObject;
 
-					responseData = await plivoApiRequest.call(this, 'POST', '/Message', body);
-
+					responseData = await plivoApiRequest.call(this, 'POST', requestPath`/Message`, body);
 				}
-
 			} else if (resource === 'call') {
-
 				// *********************************************************************
 				//                                call
 				// *********************************************************************
 
 				if (operation === 'make') {
-
 					// ----------------------------------
 					//            call: make
 					// ----------------------------------
 
-					// https://www.plivo.com/docs/voice/api/call#make-a-call
+					// https://www.plivo.com/docs/voice/api/calls#create-a-call
 
 					const body = {
 						from: this.getNodeParameter('from', i) as string,
@@ -135,23 +114,19 @@ export class Plivo implements INodeType {
 						answer_method: this.getNodeParameter('answer_method', i) as string,
 					} as IDataObject;
 
-					responseData = await plivoApiRequest.call(this, 'POST', '/Call', body);
-
+					responseData = await plivoApiRequest.call(this, 'POST', requestPath`/Call`, body);
 				}
-
 			} else if (resource === 'mms') {
-
 				// *********************************************************************
 				//                                mms
 				// *********************************************************************
 
 				if (operation === 'send') {
-
 					// ----------------------------------
 					//            mss: send
 					// ----------------------------------
 
-					// https://www.plivo.com/docs/sms/api/message#send-a-message
+					// https://www.plivo.com/docs/messaging/api/messages#send-a-message
 
 					const body = {
 						src: this.getNodeParameter('from', i) as string,
@@ -161,16 +136,13 @@ export class Plivo implements INodeType {
 						media_urls: this.getNodeParameter('media_urls', i) as string,
 					} as IDataObject;
 
-					responseData = await plivoApiRequest.call(this, 'POST', '/Message', body);
-
+					responseData = await plivoApiRequest.call(this, 'POST', requestPath`/Message`, body);
 				}
-
 			}
 
 			Array.isArray(responseData)
-				? returnData.push(...responseData)
-				: returnData.push(responseData);
-
+				? returnData.push(...(responseData as IDataObject[]))
+				: returnData.push(responseData as IDataObject);
 		}
 
 		return [this.helpers.returnJsonArray(returnData)];

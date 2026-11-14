@@ -1,20 +1,16 @@
-import {
-	ICredentialType,
-	INodeProperties,
-} from 'n8n-workflow';
+import type { ICredentialType, INodeProperties } from 'n8n-workflow';
 
-const scopes = [
-	'read',
-	'write',
-];
+const defaultScopes = ['read', 'write'];
 
 export class ZendeskOAuth2Api implements ICredentialType {
 	name = 'zendeskOAuth2Api';
-	extends = [
-		'oAuth2Api',
-	];
+
+	extends = ['oAuth2Api'];
+
 	displayName = 'Zendesk OAuth2 API';
+
 	documentationUrl = 'zendesk';
+
 	properties: INodeProperties[] = [
 		{
 			displayName: 'Subdomain',
@@ -22,8 +18,14 @@ export class ZendeskOAuth2Api implements ICredentialType {
 			type: 'string',
 			default: '',
 			placeholder: 'n8n',
-			description: 'The subdomain of your Zendesk work environment.',
+			description: 'The subdomain of your Zendesk work environment',
 			required: true,
+		},
+		{
+			displayName: 'Grant Type',
+			name: 'grantType',
+			type: 'hidden',
+			default: 'authorizationCode',
 		},
 		{
 			displayName: 'Authorization URL',
@@ -52,6 +54,7 @@ export class ZendeskOAuth2Api implements ICredentialType {
 			displayName: 'Client Secret',
 			name: 'clientSecret',
 			type: 'string',
+			typeOptions: { password: true },
 			default: '',
 			required: true,
 		},
@@ -59,14 +62,47 @@ export class ZendeskOAuth2Api implements ICredentialType {
 			displayName: 'Scope',
 			name: 'scope',
 			type: 'hidden',
-			default: scopes.join(' '),
+			default:
+				'={{$self["customScopes"] ? $self["enabledScopes"] : "' + defaultScopes.join(' ') + '"}}',
+		},
+		{
+			displayName: 'Custom Scopes',
+			name: 'customScopes',
+			type: 'boolean',
+			default: false,
+			description: 'Define custom scopes',
+		},
+		{
+			displayName:
+				'The default scopes needed for the node to work are already set, If you change these the node may not function correctly.',
+			name: 'customScopesNotice',
+			type: 'notice',
+			default: '',
+			displayOptions: {
+				show: {
+					customScopes: [true],
+				},
+			},
+		},
+		{
+			displayName: 'Enabled Scopes',
+			name: 'enabledScopes',
+			type: 'string',
+			displayOptions: {
+				show: {
+					customScopes: [true],
+				},
+			},
+			default: defaultScopes.join(' '),
+			description: 'Scopes that should be enabled',
 		},
 		{
 			displayName: 'Auth URI Query Parameters',
 			name: 'authQueryParameters',
 			type: 'hidden',
 			default: '',
-			description: 'For some services additional query parameters have to be set which can be defined here.',
+			description:
+				'For some services additional query parameters have to be set which can be defined here',
 			placeholder: '',
 		},
 		{
@@ -74,7 +110,24 @@ export class ZendeskOAuth2Api implements ICredentialType {
 			name: 'authentication',
 			type: 'hidden',
 			default: 'body',
-			description: 'Resource to consume.',
+		},
+		{
+			displayName: 'Marketplace Name',
+			name: 'marketplaceName',
+			type: 'hidden',
+			default: '',
+		},
+		{
+			displayName: 'Marketplace Organization ID',
+			name: 'marketplaceOrganizationId',
+			type: 'hidden',
+			default: '',
+		},
+		{
+			displayName: 'Marketplace App ID',
+			name: 'marketplaceAppId',
+			type: 'hidden',
+			default: '',
 		},
 	];
 }

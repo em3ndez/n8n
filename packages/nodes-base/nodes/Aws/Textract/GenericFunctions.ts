@@ -1,35 +1,29 @@
-import {
-	URL,
-} from 'url';
-
-import {
-	Request,
-	sign,
-} from 'aws4';
-
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
-	parseString,
-} from 'xml2js';
-
-import {
+import type { Request } from 'aws4';
+import { sign } from 'aws4';
+import type {
+	ICredentialDataDecryptedObject,
+	ICredentialTestFunctions,
 	IExecuteFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
 	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
-	ICredentialDataDecryptedObject,
-	ICredentialTestFunctions,
-	NodeApiError,
-	NodeOperationError,
+	IHttpRequestOptions,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl, sanitizeXmlName } from 'n8n-workflow';
+import { URL } from 'url';
+import { parseString } from 'xml2js';
+import { getAwsCredentials } from '../GenericFunctions';
+import { assertSupportedAwsRegion } from '../../../credentials/common/aws/utils';
 
-function getEndpointForService(service: string, credentials: ICredentialDataDecryptedObject): string {
+function getEndpointForService(
+	service: string,
+	credentials: ICredentialDataDecryptedObject,
+): string {
+	assertSupportedAwsRegion(credentials.region);
 	let endpoint;
 	if (service === 'lambda' && credentials.lambdaEndpoint) {
 		endpoint = credentials.lambdaEndpoint;
@@ -38,66 +32,90 @@ function getEndpointForService(service: string, credentials: ICredentialDataDecr
 	} else {
 		endpoint = `https://${service}.${credentials.region}.amazonaws.com`;
 	}
-	return (endpoint as string).replace('{region}', credentials.region as string);
+	return (endpoint as string).replace('{region}', credentials.region);
 }
 
-export async function awsApiRequest(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions | IWebhookFunctions, service: string, method: string, path: string, body?: string, headers?: object): Promise<any> { // tslint:disable-line:no-any
-	const credentials = await this.getCredentials('aws');
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
+export async function awsApiRequest(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions | IWebhookFunctions,
+	service: string,
+	method: IHttpRequestMethods,
+	path: string,
+	body?: string,
+	headers?: object,
+): Promise<any> {
+	const { credentials, credentialsType } = await getAwsCredentials(this);
 
-	// Concatenate path and instantiate URL object so it parses correctly query strings
-	const endpoint = new URL(getEndpointForService(service, credentials) + path);
-
-	// Sign AWS API request with the user credentials
-	const signOpts = { headers: headers || {}, host: endpoint.host, method, path, body } as Request;
-	sign(signOpts, { accessKeyId: `${credentials.accessKeyId}`.trim(), secretAccessKey: `${credentials.secretAccessKey}`.trim() });
-
-
-	const options: OptionsWithUri = {
-		headers: signOpts.headers,
+	const requestOptions = {
+		qs: {
+			service,
+			path,
+		},
 		method,
-		uri: endpoint.href,
-		body: signOpts.body,
-	};
+		body,
+		url: '',
+		headers,
+		region: credentials?.region as string,
+	} as IHttpRequestOptions;
 
 	try {
-		return await this.helpers.request!(options);
+		return await this.helpers.requestWithAuthentication.call(this, credentialsType, requestOptions);
 	} catch (error) {
 		if (error?.response?.data || error?.response?.body) {
 			const errorMessage = error?.response?.data || error?.response?.body;
 			if (errorMessage.includes('AccessDeniedException')) {
-				const user = JSON.parse(errorMessage).Message.split(' ')[1];
-				throw new NodeApiError(this.getNode(), error, { 
+				const user = JSON.parse(errorMessage as string).Message.split(' ')[1];
+				throw new NodeApiError(this.getNode(), error as JsonObject, {
 					message: 'Unauthorized — please check your AWS policy configuration',
-					description: `Make sure an identity-based policy allows user ${user} to perform textract:AnalyzeExpense` });
+					description: `Make sure an identity-based policy allows user ${user} to perform textract:AnalyzeExpense`,
+				});
 			}
 		}
 
-		throw new NodeApiError(this.getNode(), error); // no XML parsing needed
+		throw new NodeApiError(this.getNode(), error as JsonObject); // no XML parsing needed
 	}
 }
 
-export async function awsApiRequestREST(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions, service: string, method: string, path: string, body?: string, headers?: object): Promise<any> { // tslint:disable-line:no-any
+export async function awsApiRequestREST(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
+	service: string,
+	method: IHttpRequestMethods,
+	path: string,
+	body?: string,
+	headers?: object,
+): Promise<any> {
 	const response = await awsApiRequest.call(this, service, method, path, body, headers);
 	try {
-		return JSON.parse(response);
+		return JSON.parse(response as string);
 	} catch (error) {
 		return response;
 	}
 }
 
-export async function awsApiRequestSOAP(this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions | IWebhookFunctions, service: string, method: string, path: string, body?: string, headers?: object): Promise<any> { // tslint:disable-line:no-any
+export async function awsApiRequestSOAP(
+	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions | IWebhookFunctions,
+	service: string,
+	method: IHttpRequestMethods,
+	path: string,
+	body?: string,
+	headers?: object,
+): Promise<any> {
 	const response = await awsApiRequest.call(this, service, method, path, body, headers);
 	try {
 		return await new Promise((resolve, reject) => {
-			parseString(response, { explicitArray: false }, (err, data) => {
-				if (err) {
-					return reject(err);
-				}
-				resolve(data);
-			});
+			parseString(
+				response as string,
+				{
+					explicitArray: false,
+					tagNameProcessors: [sanitizeXmlName],
+					attrNameProcessors: [sanitizeXmlName],
+				},
+				(err, data) => {
+					if (err) {
+						return reject(err);
+					}
+					resolve(data);
+				},
+			);
 		});
 	} catch (error) {
 		return response;
@@ -119,38 +137,63 @@ export interface IExpenseDocument {
 		{
 			SummaryFields: [
 				{
-					LabelDetection: { Text: string },
-					ValueDetection: { Text: string },
-					Type: { Text: string }
-				}]
-		}];
+					LabelDetection: { Text: string };
+					ValueDetection: { Text: string };
+					Type: { Text: string };
+				},
+			];
+		},
+	];
 }
 
-export async function validateCrendetials(this: ICredentialTestFunctions, decryptedCredentials: ICredentialDataDecryptedObject, service: string): Promise<any> { // tslint:disable-line:no-any
+export async function validateCredentials(
+	this: ICredentialTestFunctions,
+	decryptedCredentials: ICredentialDataDecryptedObject,
+	service: string,
+): Promise<any> {
 	const credentials = decryptedCredentials;
 
-	// Concatenate path and instantiate URL object so it parses correctly query strings
-	const endpoint = new URL(getEndpointForService(service, credentials) + `?Action=GetCallerIdentity&Version=2011-06-15`);
+	const endpoint = new URL(getEndpointForService(service, credentials));
 
 	// Sign AWS API request with the user credentials
-	const signOpts = { host: endpoint.host, method: 'POST', path: '?Action=GetCallerIdentity&Version=2011-06-15' } as Request;
-	sign(signOpts, { accessKeyId: `${credentials.accessKeyId}`.trim(), secretAccessKey: `${credentials.secretAccessKey}`.trim() });
+	const signOpts = {
+		host: endpoint.host,
+		method: 'POST',
+		path: '?Action=GetCallerIdentity&Version=2011-06-15',
+	} as Request;
+	const securityHeaders = {
+		accessKeyId: `${credentials.accessKeyId}`.trim(),
+		secretAccessKey: `${credentials.secretAccessKey}`.trim(),
+		sessionToken: credentials.temporaryCredentials
+			? `${credentials.sessionToken}`.trim()
+			: undefined,
+	};
 
-	const options: OptionsWithUri = {
+	sign(signOpts, securityHeaders);
+
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		headers: signOpts.headers,
 		method: 'POST',
-		uri: endpoint.href,
+		uri: requestUrl`${endpoint.origin}/?Action=GetCallerIdentity&Version=2011-06-15`,
 		body: signOpts.body,
 	};
 
-	const response = await this.helpers.request!(options);
+	const response = await this.helpers.request(options);
 
 	return await new Promise((resolve, reject) => {
-		parseString(response, { explicitArray: false }, (err, data) => {
-			if (err) {
-				return reject(err);
-			}
-			resolve(data);
-		});
+		parseString(
+			response as string,
+			{
+				explicitArray: false,
+				tagNameProcessors: [sanitizeXmlName],
+				attrNameProcessors: [sanitizeXmlName],
+			},
+			(err, data) => {
+				if (err) {
+					return reject(err);
+				}
+				resolve(data);
+			},
+		);
 	});
 }

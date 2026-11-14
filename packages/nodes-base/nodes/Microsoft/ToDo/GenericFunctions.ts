@@ -1,28 +1,128 @@
-import {
-	OptionsWithUri
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-
-import {
 	IDataObject,
 	ILoadOptionsFunctions,
-	NodeApiError,
+	INode,
+	INodeParameterResourceLocator,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	LegacyRequestOptions,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeApiError, requestPath, requestUrl } from 'n8n-workflow';
 
-export async function microsoftApiRequest(this: IExecuteFunctions | ILoadOptionsFunctions, method: string, resource: string, body: IDataObject = {}, qs: IDataObject = {}, uri?: string, headers: IDataObject = {}, option: IDataObject = { json: true }) {
-	const options: OptionsWithUri = {
-		headers: {
-			'Content-Type': 'application/json',
-		},
-		method,
-		body,
-		qs,
-		uri: uri || `https://graph.microsoft.com/v1.0/me${resource}`,
-	};
+import { validateUserTargetId } from '../GenericFunctions';
+
+export type ToDoCredentialType =
+	| 'microsoftToDoOAuth2Api'
+	| 'microsoftOAuth2Api'
+	| 'microsoftEntraServicePrincipalApi';
+
+/**
+ * Resolves which credential type the node is configured to use. Defaults to the
+ * node-specific `microsoftToDoOAuth2Api` so existing workflows (and nodes saved
+ * before the `authentication` selector existed) keep working unchanged, while
+ * allowing the generic `microsoftOAuth2Api` (Graph) credential to be selected.
+ */
+export function getToDoCredentialType(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+): ToDoCredentialType {
+	// `0` is the execute item index; in load-options getNodeParameter has no itemIndex
+	// arg, so don't switch this to the 3-arg `(name, itemIndex, default)` form. Anything
+	// other than these two non-default values (incl. legacy nodes) resolves to the To Do
+	// credential.
+	const selected = this.getNodeParameter('authentication', 0);
+	if (selected === 'microsoftOAuth2Api' || selected === 'microsoftEntraServicePrincipalApi') {
+		return selected;
+	}
+	return 'microsoftToDoOAuth2Api';
+}
+
+// App-only Microsoft Graph has no `/me`, and To Do lists/tasks belong to a user, so under
+// the Service Principal credential the request is addressed under an explicit `/users/{id}`
+// root. To Do is user-only, so it validates via the shared `validateUserTargetId` (default
+// "target ID" wording) — the id shape is checked BEFORE encoding. ENT-123 lifted that
+// validator to `Microsoft/GenericFunctions.ts`; SharePoint (ENT-92) adopts the same
+// validator when Service Principal support lands there.
+
+/**
+ * Builds the `/users/{id}` Graph root for an app-only request. The id is validated before
+ * encoding so a malformed id throws (and is not echoed back).
+ */
+export function getServicePrincipalResourceRoot(rawId: string, node: INode): RequestPath {
+	const id = String(rawId ?? '').trim();
+	validateUserTargetId(id, node);
+	return requestPath`/users/${id}`;
+}
+
+/**
+ * Resolves the app-only `/users/{id}` root for the current node context, or `undefined`
+ * for the OAuth2 credentials (which use the `/me` path). The `userTarget` RLC accepts
+ * expressions and is resolved per item: execute call sites pass the loop's item index;
+ * load-options call sites pass a literal 0 — there `getNodeParameter`'s 2nd arg is a
+ * fallback, not an index. The RLC value is extracted manually (not via
+ * `{ extractValue: true }`) so the single call shape works in both contexts; an
+ * unpersisted/empty target coalesces to `''`, which yields the intended "target ID
+ * required" error rather than a malformed `/users/` URL. A validation error gets its
+ * item index stamped in the node's execute catch.
+ */
+export function resolveScopeRoot(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	itemIndex: number,
+): RequestPath | undefined {
+	if (getToDoCredentialType.call(this) !== 'microsoftEntraServicePrincipalApi') {
+		return undefined;
+	}
+	const raw = this.getNodeParameter('userTarget', itemIndex, '');
+	const id =
+		typeof raw === 'string'
+			? raw
+			: String((raw as INodeParameterResourceLocator | undefined)?.value ?? '');
+	return getServicePrincipalResourceRoot(id, this.getNode());
+}
+
+// `itemIndex` is REQUIRED (and placed before the defaulted params so call sites
+// need no positional padding): execute call sites pass the loop index; loadOptions
+// call sites pass a literal 0, where `getNodeParameter`'s 2nd arg is a fallback,
+// not an index.
+export async function microsoftApiRequest(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	resource: RequestPath,
+	itemIndex: number,
+	body: IDataObject = {},
+	qs: IDataObject = {},
+	uri?: string,
+	option: Pick<IRequestOptions, 'json'> = { json: true },
+) {
+	const credentialType = getToDoCredentialType.call(this);
+	const isServicePrincipal = credentialType === 'microsoftEntraServicePrincipalApi';
+	const credentials = await this.getCredentials(credentialType);
+	const baseUrl = (
+		typeof credentials.graphApiBaseUrl === 'string' && credentials.graphApiBaseUrl !== ''
+			? credentials.graphApiBaseUrl
+			: 'https://graph.microsoft.com'
+	).replace(/\/+$/, '');
+
+	// App-only Service Principal has no `/me`; rebase the request onto the chosen user,
+	// resolved per item (`userTarget` accepts expressions). Only page-1 (relative)
+	// requests are scoped — paginated follow-ups pass an absolute `@odata.nextLink` as
+	// `uri`, used verbatim.
+	const scopeRoot = !uri && isServicePrincipal ? resolveScopeRoot.call(this, itemIndex) : undefined;
+
 	try {
+		const options: LegacyRequestOptions = {
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			method,
+			body,
+			qs,
+			...(uri
+				? { uri }
+				: { uri: requestUrl`${baseUrl}/v1.0${scopeRoot ?? requestPath`/me`}${resource}` }),
+		};
 		Object.assign(options, option);
 		if (Object.keys(qs).length === 0) {
 			delete options.qs;
@@ -30,47 +130,50 @@ export async function microsoftApiRequest(this: IExecuteFunctions | ILoadOptions
 		if (Object.keys(body).length === 0) {
 			delete options.body;
 		}
-		//@ts-ignore
-		return await this.helpers.requestOAuth2.call(this, 'microsoftToDoOAuth2Api', options);
+		// SP is not an `oAuth2Api` parent type, so it must route through
+		// `requestWithAuthentication` (client_credentials token mint + Bearer attach + core's
+		// single 401-retry). OAuth2 credentials keep `requestOAuth2`.
+		if (isServicePrincipal) {
+			return await this.helpers.requestWithAuthentication.call(this, credentialType, options);
+		}
+		return await this.helpers.requestOAuth2.call(this, credentialType, options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		// The node's execute catch stamps the failing item's index.
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
 
-export async function microsoftApiRequestAllItems(this: IExecuteFunctions | ILoadOptionsFunctions, propertyName: string, method: string, endpoint: string, body: IDataObject = {}, query: IDataObject = {}) {
-
+export async function microsoftApiRequestAllItems(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	propertyName: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	itemIndex: number,
+	body: IDataObject = {},
+	query: IDataObject = {},
+) {
 	const returnData: IDataObject[] = [];
 
 	let responseData;
 	let uri: string | undefined;
-	query['$top'] = 100;
+	query.$top = 100;
 
 	do {
-		responseData = await microsoftApiRequest.call(this, method, endpoint, body, query, uri);
+		responseData = await microsoftApiRequest.call(
+			this,
+			method,
+			endpoint,
+			itemIndex,
+			body,
+			query,
+			uri,
+		);
 		uri = responseData['@odata.nextLink'];
-		returnData.push.apply(returnData, responseData[propertyName]);
-	} while (
-		responseData['@odata.nextLink'] !== undefined
-	);
-
-	return returnData;
-}
-
-export async function microsoftApiRequestAllItemsSkip(this: IExecuteFunctions, propertyName: string, method: string, endpoint: string, body: IDataObject = {}, query: IDataObject = {}) {
-
-	const returnData: IDataObject[] = [];
-
-	let responseData;
-	query['$top'] = 100;
-	query['$skip'] = 0;
-
-	do {
-		responseData = await microsoftApiRequest.call(this, method, endpoint, body, query);
-		query['$skip'] += query['$top'];
-		returnData.push.apply(returnData, responseData[propertyName]);
-	} while (
-		responseData['value'].length !== 0
-	);
+		if (uri?.includes('$top')) {
+			delete query.$top;
+		}
+		returnData.push.apply(returnData, responseData[propertyName] as IDataObject[]);
+	} while (responseData['@odata.nextLink'] !== undefined);
 
 	return returnData;
 }

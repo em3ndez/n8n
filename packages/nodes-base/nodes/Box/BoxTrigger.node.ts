@@ -1,33 +1,30 @@
 import {
-	IHookFunctions,
-	IWebhookFunctions,
-} from 'n8n-core';
-
-import {
-	INodeType,
-	INodeTypeDescription,
-	IWebhookResponseData,
+	type IHookFunctions,
+	type IWebhookFunctions,
+	type INodeType,
+	type INodeTypeDescription,
+	type IWebhookResponseData,
+	NodeConnectionTypes,
+	requestPath,
 } from 'n8n-workflow';
 
-import {
-	boxApiRequest,
-	boxApiRequestAllItems,
-} from './GenericFunctions';
+import { verifySignature } from './BoxTriggerHelpers';
+import { boxApiRequest, boxApiRequestAllItemsMarker } from './GenericFunctions';
 
 export class BoxTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Box Trigger',
 		name: 'boxTrigger',
+		// eslint-disable-next-line n8n-nodes-base/node-class-description-icon-not-svg
 		icon: 'file:box.png',
 		group: ['trigger'],
 		version: 1,
 		description: 'Starts the workflow when Box events occur',
 		defaults: {
 			name: 'Box Trigger',
-			color: '#00aeef',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'boxOAuth2Api',
@@ -71,7 +68,7 @@ export class BoxTrigger implements INodeType {
 					{
 						name: 'Collaboration Updated',
 						value: 'COLLABORATION.UPDATED',
-						description: 'A collaboration has been updated.',
+						description: 'A collaboration has been updated',
 					},
 					{
 						name: 'Comment Created',
@@ -121,7 +118,7 @@ export class BoxTrigger implements INodeType {
 					{
 						name: 'File Renamed',
 						value: 'FILE.RENAMED',
-						description: 'A file was renamed.',
+						description: 'A file was renamed',
 					},
 					{
 						name: 'File Restored',
@@ -171,7 +168,7 @@ export class BoxTrigger implements INodeType {
 					{
 						name: 'Folder Renamed',
 						value: 'FOLDER.RENAMED',
-						description: 'A folder was renamed.',
+						description: 'A folder was renamed',
 					},
 					{
 						name: 'Folder Restored',
@@ -191,12 +188,14 @@ export class BoxTrigger implements INodeType {
 					{
 						name: 'Metadata Instance Deleted',
 						value: 'METADATA_INSTANCE.DELETED',
-						description: 'An existing metadata template instance associated with a file or folder is deleted',
+						description:
+							'An existing metadata template instance associated with a file or folder is deleted',
 					},
 					{
 						name: 'Metadata Instance Updated',
 						value: 'METADATA_INSTANCE.UPDATED',
-						description: 'An attribute (value) is updated/deleted for an existing metadata template instance associated with a file or folder',
+						description:
+							'An attribute (value) is updated/deleted for an existing metadata template instance associated with a file or folder',
 					},
 					{
 						name: 'Sharedlink Created',
@@ -231,7 +230,7 @@ export class BoxTrigger implements INodeType {
 				],
 				required: true,
 				default: [],
-				description: 'The events to listen to.',
+				description: 'The events to listen to',
 			},
 			{
 				displayName: 'Target Type',
@@ -254,51 +253,69 @@ export class BoxTrigger implements INodeType {
 				displayName: 'Target ID',
 				name: 'targetId',
 				type: 'string',
-				required: false,
 				default: '',
 				description: 'The ID of the item to trigger a webhook',
 			},
 		],
 	};
 
-	// @ts-ignore (because of request)
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
 				const webhookUrl = this.getNodeWebhookUrl('default');
 				const webhookData = this.getWorkflowStaticData('node');
-				const events = this.getNodeParameter('events') as string;
+				const events = this.getNodeParameter('events') as string[];
 				const targetId = this.getNodeParameter('targetId') as string;
 				const targetType = this.getNodeParameter('targetType') as string;
 				// Check all the webhooks which exist already if it is identical to the
 				// one that is supposed to get created.
-				const endpoint = '/webhooks';
-				const webhooks = await boxApiRequestAllItems.call(this, 'entries', 'GET', endpoint, {});
+				const endpoint = requestPath`/webhooks`;
+				// Box webhook list API uses marker-based pagination (not offset)
+				const webhooks = await boxApiRequestAllItemsMarker.call(
+					this,
+					'entries',
+					'GET',
+					endpoint,
+					{},
+				);
 
 				for (const webhook of webhooks) {
-					if (webhook.address === webhookUrl &&
-						webhook.target.id === targetId &&
-						webhook.target.type === targetType) {
-						for (const event of events) {
-							if (!webhook.triggers.includes(event)) {
-								return false;
-							}
-						}
+					// Skip full fetch if target doesn't match — target is available in the mini object
+					if (
+						(webhook.target as { id: string; type: string }).id !== targetId ||
+						(webhook.target as { id: string; type: string }).type !== targetType
+					) {
+						continue;
 					}
-					// Set webhook-id to be sure that it can be deleted
-					webhookData.webhookId = webhook.id as string;
-					return true;
+
+					// Fetch full details to access address and triggers (not in mini object)
+					const fullWebhook = await boxApiRequest.call(
+						this,
+						'GET',
+						requestPath`/webhooks/${webhook.id}`,
+					);
+
+					if (fullWebhook.address === webhookUrl) {
+						const allEventsMatch = events.every((event) =>
+							(fullWebhook.triggers as string[]).includes(event),
+						);
+						if (!allEventsMatch) {
+							return false;
+						}
+						webhookData.webhookId = fullWebhook.id as string;
+						return true;
+					}
 				}
 				return false;
 			},
 			async create(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				const webhookUrl = this.getNodeWebhookUrl('default');
-				const events = this.getNodeParameter('events') as string;
+				const events = this.getNodeParameter('events') as string[];
 				const targetId = this.getNodeParameter('targetId') as string;
 				const targetType = this.getNodeParameter('targetType') as string;
 
-				const endpoint = '/webhooks';
+				const endpoint = requestPath`/webhooks`;
 
 				const body = {
 					address: webhookUrl,
@@ -322,8 +339,7 @@ export class BoxTrigger implements INodeType {
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const webhookData = this.getWorkflowStaticData('node');
 				if (webhookData.webhookId !== undefined) {
-
-					const endpoint = `/webhooks/${webhookData.webhookId}`;
+					const endpoint = requestPath`/webhooks/${webhookData.webhookId}`;
 
 					try {
 						await boxApiRequest.call(this, 'DELETE', endpoint);
@@ -332,7 +348,7 @@ export class BoxTrigger implements INodeType {
 					}
 
 					// Remove from the static workflow data so that it is clear
-					// that no webhooks are registred anymore
+					// that no webhooks are registered anymore
 					delete webhookData.webhookId;
 				}
 				return true;
@@ -341,12 +357,19 @@ export class BoxTrigger implements INodeType {
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		const isSignatureValid = await verifySignature.call(this);
+		if (!isSignatureValid) {
+			const res = this.getResponseObject();
+			res.status(401).send('Unauthorized').end();
+			return {
+				noWebhookResponse: true,
+			};
+		}
+
 		const bodyData = this.getBodyData();
 
 		return {
-			workflowData: [
-				this.helpers.returnJsonArray(bodyData),
-			],
+			workflowData: [this.helpers.returnJsonArray(bodyData)],
 		};
 	}
 }

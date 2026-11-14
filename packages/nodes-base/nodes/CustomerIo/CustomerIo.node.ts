@@ -1,50 +1,35 @@
-import {
+import type {
 	IExecuteFunctions,
-} from 'n8n-core';
-import {
 	IDataObject,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
+	RequestPath,
 } from 'n8n-workflow';
-import {
-	customerIoApiRequest,
-	validateJSON,
-} from './GenericFunctions';
-import {
-	campaignFields,
-	campaignOperations,
-} from './CampaignDescription';
-import {
-	customerFields,
-	customerOperations,
-} from './CustomerDescription';
-import {
-	eventFields,
-	eventOperations,
-} from './EventDescription';
-import {
-	segmentFields,
-	segmentOperations,
-} from './SegmentDescription';
+import { NodeConnectionTypes, NodeOperationError, requestPath } from 'n8n-workflow';
 
+import { campaignFields, campaignOperations } from './CampaignDescription';
+import { customerFields, customerOperations } from './CustomerDescription';
+import { eventFields, eventOperations } from './EventDescription';
+import { customerIoApiRequest, toPathValue, validateJSON } from './GenericFunctions';
+import { segmentFields, segmentOperations } from './SegmentDescription';
 
 export class CustomerIo implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Customer.io',
 		name: 'customerIo',
-		icon: 'file:customerio.svg',
+		icon: { light: 'file:customerio.svg', dark: 'file:customerio.dark.svg' },
 		group: ['output'],
-		version: 1,
+		version: [1, 1.1],
+		defaultVersion: 1.1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Consume Customer.io API',
 		defaults: {
-			name: 'CustomerIo',
-			color: '#ffcd00',
+			name: 'Customer.io',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'customerIoApi',
@@ -56,6 +41,7 @@ export class CustomerIo implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Customer',
@@ -75,7 +61,6 @@ export class CustomerIo implements INodeType {
 					},
 				],
 				default: 'customer',
-				description: 'Resource to consume.',
 			},
 			// CAMPAIGN
 			...campaignOperations,
@@ -95,55 +80,58 @@ export class CustomerIo implements INodeType {
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const returnData: IDataObject[] = [];
 		const items = this.getInputData();
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = this.getNodeParameter('resource', 0);
+		const operation = this.getNodeParameter('operation', 0);
+		const { typeVersion } = this.getNode();
 		const body: IDataObject = {};
 
 		let responseData;
 		for (let i = 0; i < items.length; i++) {
-
 			try {
-
 				if (resource === 'campaign') {
 					if (operation === 'get') {
 						const campaignId = this.getNodeParameter('campaignId', i) as number;
-						const endpoint = `/campaigns/${campaignId}`;
+						const endpoint = requestPath`/campaigns/${campaignId}`;
 
-						responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'beta');
+						responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'app');
 						responseData = responseData.campaign;
 					}
 
 					if (operation === 'getAll') {
-						const endpoint = `/campaigns`;
+						const endpoint = requestPath`/campaigns`;
 
-						responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'beta');
+						responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'app');
 						responseData = responseData.campaigns;
 					}
 
 					if (operation === 'getMetrics') {
 						const campaignId = this.getNodeParameter('campaignId', i) as number;
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
-
 								if (validateJSON(additionalFieldsJson) !== undefined) {
-
 									Object.assign(body, JSON.parse(additionalFieldsJson));
-
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
 						} else {
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+							const additionalFields = this.getNodeParameter('additionalFields', i);
 							const period = this.getNodeParameter('period', i) as string;
-							let endpoint = `/campaigns/${campaignId}/metrics`;
+							let endpoint = requestPath`/campaigns/${campaignId}/metrics`;
 
 							if (period !== 'days') {
-								endpoint = `${endpoint}?period=${period}`;
+								endpoint = requestPath`${endpoint}?period=${period}`;
 							}
 							if (additionalFields.steps) {
 								body.steps = additionalFields.steps as number;
@@ -156,38 +144,41 @@ export class CustomerIo implements INodeType {
 								}
 							}
 
-							responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'beta');
+							responseData = await customerIoApiRequest.call(this, 'GET', endpoint, body, 'app');
 							responseData = responseData.metric;
 						}
 					}
 				}
 
 				if (resource === 'customer') {
-
 					if (operation === 'upsert') {
-						const id = this.getNodeParameter('id', i) as number;
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const id = this.getNodeParameter('id', i) as string;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
-
 								if (validateJSON(additionalFieldsJson) !== undefined) {
-
 									Object.assign(body, JSON.parse(additionalFieldsJson));
-
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
 						} else {
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
+							const additionalFields = this.getNodeParameter('additionalFields', i);
 
 							if (additionalFields.customProperties) {
-								const data: any = {}; // tslint:disable-line:no-any
+								const data: any = {};
 								//@ts-ignore
-								additionalFields.customProperties.customProperty.map(property => {
+								additionalFields.customProperties.customProperty.map((property) => {
 									data[property.key] = property.value;
 								});
 
@@ -203,7 +194,7 @@ export class CustomerIo implements INodeType {
 							}
 						}
 
-						const endpoint = `/customers/${id}`;
+						const endpoint = requestPath`/customers/${toPathValue(typeVersion, id)}`;
 
 						responseData = await customerIoApiRequest.call(this, 'PUT', endpoint, body, 'tracking');
 
@@ -211,11 +202,11 @@ export class CustomerIo implements INodeType {
 					}
 
 					if (operation === 'delete') {
-						const id = this.getNodeParameter('id', i) as number;
+						const id = this.getNodeParameter('id', i) as string;
 
 						body.id = id;
 
-						const endpoint = `/customers/${id}`;
+						const endpoint = requestPath`/customers/${toPathValue(typeVersion, id)}`;
 
 						await customerIoApiRequest.call(this, 'DELETE', endpoint, body, 'tracking');
 
@@ -227,30 +218,36 @@ export class CustomerIo implements INodeType {
 
 				if (resource === 'event') {
 					if (operation === 'track') {
-						const customerId = this.getNodeParameter('customerId', i) as number;
+						const customerId = this.getNodeParameter('customerId', i) as string;
 						const eventName = this.getNodeParameter('eventName', i) as string;
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 
 						body.name = eventName;
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
-
 								if (validateJSON(additionalFieldsJson) !== undefined) {
 									Object.assign(body, JSON.parse(additionalFieldsJson));
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
 						} else {
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
-							const data: any = {}; // tslint:disable-line:no-any
+							const additionalFields = this.getNodeParameter('additionalFields', i);
+							const data: any = {};
 
 							if (additionalFields.customAttributes) {
 								//@ts-ignore
-								additionalFields.customAttributes.customAttribute.map(property => {
+								additionalFields.customAttributes.customAttribute.map((property) => {
 									data[property.key] = property.value;
 								});
 							}
@@ -262,7 +259,7 @@ export class CustomerIo implements INodeType {
 							body.data = data;
 						}
 
-						const endpoint = `/customers/${customerId}/events`;
+						const endpoint = requestPath`/customers/${toPathValue(typeVersion, customerId)}/events`;
 
 						await customerIoApiRequest.call(this, 'POST', endpoint, body, 'tracking');
 						responseData = {
@@ -272,37 +269,41 @@ export class CustomerIo implements INodeType {
 
 					if (operation === 'trackAnonymous') {
 						const eventName = this.getNodeParameter('eventName', i) as string;
-						const jsonParameters = this.getNodeParameter('jsonParameters', i) as boolean;
+						const jsonParameters = this.getNodeParameter('jsonParameters', i);
 
 						body.name = eventName;
 
 						if (jsonParameters) {
-							const additionalFieldsJson = this.getNodeParameter('additionalFieldsJson', i) as string;
+							const additionalFieldsJson = this.getNodeParameter(
+								'additionalFieldsJson',
+								i,
+							) as string;
 
 							if (additionalFieldsJson !== '') {
-
 								if (validateJSON(additionalFieldsJson) !== undefined) {
-
 									Object.assign(body, JSON.parse(additionalFieldsJson));
-
 								} else {
-									throw new NodeOperationError(this.getNode(), 'Additional fields must be a valid JSON');
+									throw new NodeOperationError(
+										this.getNode(),
+										'Additional fields must be a valid JSON',
+										{ itemIndex: i },
+									);
 								}
 							}
 						} else {
-							const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
-							const data: any = {}; // tslint:disable-line:no-any
+							const additionalFields = this.getNodeParameter('additionalFields', i);
+							const data: any = {};
 
 							if (additionalFields.customAttributes) {
 								//@ts-ignore
-								additionalFields.customAttributes.customAttribute.map(property => {
+								additionalFields.customAttributes.customAttribute.map((property) => {
 									data[property.key] = property.value;
 								});
 							}
 							body.data = data;
 						}
 
-						const endpoint = `/events`;
+						const endpoint = requestPath`/events`;
 						await customerIoApiRequest.call(this, 'POST', endpoint, body, 'tracking');
 
 						responseData = {
@@ -318,12 +319,12 @@ export class CustomerIo implements INodeType {
 					body.id = segmentId;
 					body.ids = customerIds.split(',');
 
-					let endpoint = '';
+					let endpoint: RequestPath;
 
 					if (operation === 'add') {
-						endpoint = `/segments/${segmentId}/add_customers`;
+						endpoint = requestPath`/segments/${segmentId}/add_customers`;
 					} else {
-						endpoint = `/segments/${segmentId}/remove_customers`;
+						endpoint = requestPath`/segments/${segmentId}/remove_customers`;
 					}
 
 					responseData = await customerIoApiRequest.call(this, 'POST', endpoint, body, 'tracking');
@@ -338,7 +339,6 @@ export class CustomerIo implements INodeType {
 				} else {
 					returnData.push(responseData as unknown as IDataObject);
 				}
-
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({ error: error.message });

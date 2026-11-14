@@ -1,38 +1,35 @@
-import * as moment from 'moment-timezone';
-
-import { IPollFunctions } from 'n8n-core';
-import {
+import moment from 'moment-timezone';
+import type {
+	IPollFunctions,
 	IDataObject,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
+	RequestPath,
 } from 'n8n-workflow';
+import { NodeConnectionTypes, requestPath } from 'n8n-workflow';
 
-import {
-	clockifyApiRequest,
-} from './GenericFunctions';
-
-import { EntryTypeEnum } from './EntryTypeEnum';
-import { IUserDto } from './UserDtos';
-import { IWorkspaceDto } from './WorkpaceInterfaces';
-
+import type { EntryType } from './EntryType';
+import { EntryTypes } from './EntryType';
+import { clockifyApiRequest } from './GenericFunctions';
+import type { IUserDto } from './UserDtos';
+import type { IWorkspaceDto } from './WorkpaceInterfaces';
 
 export class ClockifyTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Clockify Trigger',
-		icon: 'file:clockify.svg',
+		icon: { light: 'file:clockify.svg', dark: 'file:clockify.dark.svg' },
 		name: 'clockifyTrigger',
 		group: ['trigger'],
 		version: 1,
 		description: 'Listens to Clockify events',
 		defaults: {
 			name: 'Clockify Trigger',
-			color: '#000000',
 		},
 		inputs: [],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'clockifyApi',
@@ -42,15 +39,18 @@ export class ClockifyTrigger implements INodeType {
 		polling: true,
 		properties: [
 			{
-				displayName: 'Workspace',
+				displayName: 'Workspace Name or ID',
 				name: 'workspaceId',
 				type: 'options',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'listWorkspaces',
 				},
 				required: true,
 				default: '',
 			},
+			// eslint-disable-next-line n8n-nodes-base/node-param-default-missing
 			{
 				displayName: 'Trigger',
 				name: 'watchField',
@@ -58,11 +58,11 @@ export class ClockifyTrigger implements INodeType {
 				options: [
 					{
 						name: 'New Time Entry',
-						value: EntryTypeEnum.NEW_TIME_ENTRY,
+						value: EntryTypes.NEW_TIME_ENTRY,
 					},
 				],
 				required: true,
-				default: EntryTypeEnum.NEW_TIME_ENTRY,
+				default: EntryTypes.NEW_TIME_ENTRY,
 			},
 		],
 	};
@@ -71,14 +71,17 @@ export class ClockifyTrigger implements INodeType {
 		loadOptions: {
 			async listWorkspaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const rtv: INodePropertyOptions[] = [];
-				const workspaces: IWorkspaceDto[] = await clockifyApiRequest.call(this, 'GET', 'workspaces');
+				const workspaces: IWorkspaceDto[] = await clockifyApiRequest.call(
+					this,
+					'GET',
+					requestPath`workspaces`,
+				);
 				if (undefined !== workspaces) {
-					workspaces.forEach(value => {
-						rtv.push(
-							{
-								name: value.name,
-								value: value.id,
-							});
+					workspaces.forEach((value) => {
+						rtv.push({
+							name: value.name,
+							value: value.id,
+						});
 					});
 				}
 				return rtv;
@@ -88,24 +91,24 @@ export class ClockifyTrigger implements INodeType {
 
 	async poll(this: IPollFunctions): Promise<INodeExecutionData[][] | null> {
 		const webhookData = this.getWorkflowStaticData('node');
-		const triggerField = this.getNodeParameter('watchField') as EntryTypeEnum;
+		const triggerField = this.getNodeParameter('watchField') as EntryType;
 		const workspaceId = this.getNodeParameter('workspaceId');
 
 		if (!webhookData.userId) {
 			// Cache the user-id that we do not have to request it every time
-			const userInfo: IUserDto = await clockifyApiRequest.call(this, 'GET', 'user');
+			const userInfo: IUserDto = await clockifyApiRequest.call(this, 'GET', requestPath`user`);
 			webhookData.userId = userInfo.id;
 		}
 
 		const qs: IDataObject = {};
-		let resource: string;
+		let resource: RequestPath;
 		let result = null;
 
 		switch (triggerField) {
-			case EntryTypeEnum.NEW_TIME_ENTRY:
+			case EntryTypes.NEW_TIME_ENTRY:
 			default:
 				const workflowTimezone = this.getTimezone();
-				resource = `workspaces/${workspaceId}/user/${webhookData.userId}/time-entries`;
+				resource = requestPath`workspaces/${workspaceId}/user/${webhookData.userId}/time-entries`;
 				qs.start = webhookData.lastTimeChecked;
 				qs.end = moment().tz(workflowTimezone).format('YYYY-MM-DDTHH:mm:ss') + 'Z';
 				qs.hydrated = true;

@@ -1,23 +1,28 @@
-import {
-	OptionsWithUri,
-} from 'request';
-
-import {
+import type {
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
-export async function twistApiRequest(this: IExecuteFunctions | ILoadOptionsFunctions, method: string, endpoint: string, body: any = {}, qs: IDataObject = {}, option: IDataObject = {}): Promise<any> { // tslint:disable-line:no-any
-
-	const options: OptionsWithUri = {
+export async function twistApiRequest(
+	this: IExecuteFunctions | ILoadOptionsFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: IDataObject = {},
+	qs: IDataObject = {},
+	option: Pick<IRequestOptions, 'formData'> = {},
+) {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		body,
 		qs,
-		uri: `https://api.twist.com/api/v3${endpoint}`,
+		uri: requestUrl`https://api.twist.com/api/v3${endpoint}`,
 		json: true,
 	};
 
@@ -32,10 +37,8 @@ export async function twistApiRequest(this: IExecuteFunctions | ILoadOptionsFunc
 	Object.assign(options, option);
 
 	try {
-		//@ts-ignore
 		return await this.helpers.requestOAuth2.call(this, 'twistOAuth2Api', options);
-
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }

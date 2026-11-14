@@ -1,42 +1,40 @@
 import {
-	IExecuteFunctions
-} from 'n8n-core';
-
-import {
-	ICredentialsDecrypted,
-	ICredentialTestFunctions,
-	IDataObject,
-	ILoadOptionsFunctions,
-	INodeExecutionData,
-	INodeType,
-	INodeTypeDescription,
-	NodeCredentialTestResult,
+	type IExecuteFunctions,
+	type ICredentialsDecrypted,
+	type ICredentialTestFunctions,
+	type IDataObject,
+	type ILoadOptionsFunctions,
+	type INodeCredentialTestResult,
+	type INodeExecutionData,
+	type INodeType,
+	type INodeTypeDescription,
+	type IRequestOptions,
+	type WithRequestTarget,
+	NodeConnectionTypes,
+	requestPath,
+	requestUrl,
 } from 'n8n-workflow';
 
-import {
-	OptionsWithUri,
-} from 'request';
+import { generatePairedItemData } from '@utils/utilities';
 
 import {
 	gristApiRequest,
+	gristBaseUrl,
 	parseAutoMappedInputs,
 	parseDefinedFields,
 	parseFilterProperties,
 	parseSortProperties,
 	throwOnZeroDefinedFields,
 } from './GenericFunctions';
-
-import {
-	operationFields,
-} from './OperationDescription';
-
-import {
+import { operationFields } from './OperationDescription';
+import type {
 	FieldsToSend,
 	GristColumns,
 	GristCreateRowPayload,
 	GristCredentials,
 	GristGetAllOptions,
 	GristUpdateRowPayload,
+	GristUpsertRowPayload,
 	SendingOptions,
 } from './types';
 
@@ -51,18 +49,50 @@ export class Grist implements INodeType {
 		description: 'Consume the Grist API',
 		defaults: {
 			name: 'Grist',
-			color: '#394650',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'gristApi',
 				required: true,
 				testedBy: 'gristApiTest',
+				displayOptions: {
+					show: {
+						authentication: ['apiKey'],
+					},
+				},
+			},
+			{
+				name: 'gristOAuth2Api',
+				required: true,
+				displayOptions: {
+					show: {
+						authentication: ['oAuth2'],
+					},
+				},
 			},
 		],
-		properties: operationFields,
+		properties: [
+			{
+				displayName: 'Authentication',
+				name: 'authentication',
+				type: 'options',
+				options: [
+					{
+						name: 'API Key',
+						value: 'apiKey',
+					},
+					{
+						name: 'OAuth2',
+						value: 'oAuth2',
+					},
+				],
+				default: 'apiKey',
+			},
+			...operationFields,
+		],
 	};
 
 	methods = {
@@ -70,9 +100,9 @@ export class Grist implements INodeType {
 			async getTableColumns(this: ILoadOptionsFunctions) {
 				const docId = this.getNodeParameter('docId', 0) as string;
 				const tableId = this.getNodeParameter('tableId', 0) as string;
-				const endpoint = `/docs/${docId}/tables/${tableId}/columns`;
+				const endpoint = requestPath`/docs/${docId}/tables/${tableId}/columns`;
 
-				const { columns } = await gristApiRequest.call(this, 'GET', endpoint) as GristColumns;
+				const { columns } = (await gristApiRequest.call(this, 'GET', endpoint)) as GristColumns;
 				return columns.map(({ id }) => ({ name: id, value: id }));
 			},
 		},
@@ -81,29 +111,28 @@ export class Grist implements INodeType {
 			async gristApiTest(
 				this: ICredentialTestFunctions,
 				credential: ICredentialsDecrypted,
-			): Promise<NodeCredentialTestResult> {
-				const {
-					apiKey,
-					planType,
-					customSubdomain,
-				} = credential.data as GristCredentials;
-
-				const subdomain = planType === 'free' ? 'docs' : customSubdomain;
-
-				const endpoint = '/orgs';
-
-				const options: OptionsWithUri = {
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-					},
-					method: 'GET',
-					uri: `https://${subdomain}.getgrist.com/api${endpoint}`,
-					qs: { limit: 1 },
-					json: true,
-				};
+			): Promise<INodeCredentialTestResult> {
+				const credentials = credential.data as GristCredentials;
 
 				try {
-					await this.helpers.request(options);
+					const options: WithRequestTarget<IRequestOptions, 'uri'> = {
+						headers: {
+							Authorization: `Bearer ${credentials.apiKey}`,
+						},
+						method: 'GET',
+						uri: requestUrl`${gristBaseUrl(credentials)}/api/orgs`,
+						json: true,
+					};
+
+					// A valid token can still grant zero accessible orgs (e.g. nothing shared); treat
+					// that as a failing test rather than a misleading success.
+					const orgs = await this.helpers.request(options);
+					if (!Array.isArray(orgs) || orgs.length === 0) {
+						return {
+							status: 'Error',
+							message: 'Connected, but no Grist organizations are accessible to this account.',
+						};
+					}
 					return {
 						status: 'OK',
 						message: 'Authentication successful',
@@ -121,16 +150,90 @@ export class Grist implements INodeType {
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 		let responseData;
-		const returnData: IDataObject[] = [];
+		const returnData: INodeExecutionData[] = [];
 
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const operation = this.getNodeParameter('operation', 0);
 
-		for (let i = 0; i < items.length; i++) {
+		if (operation === 'upsert') {
+			// ----------------------------------
+			//            upsert
+			// ----------------------------------
+
+			// https://support.getgrist.com/api/#tag/records/operation/replaceRecords
 
 			try {
+				const body: GristUpsertRowPayload = { records: [] };
 
+				// Process all input items and batch them
+				for (let i = 0; i < items.length; i++) {
+					const { properties: upsertCriteriaProperties } = this.getNodeParameter(
+						'upsertCriteria',
+						i,
+						[],
+					) as FieldsToSend;
+					throwOnZeroDefinedFields.call(this, upsertCriteriaProperties);
+					const require = parseDefinedFields(upsertCriteriaProperties);
+
+					const dataToSend = this.getNodeParameter('dataToSend', 0) as SendingOptions;
+
+					let fields: { [key: string]: any } = {};
+
+					if (dataToSend === 'autoMapInputs') {
+						const incomingKeys = Object.keys(items[i].json);
+						const rawInputsToIgnore = this.getNodeParameter('inputsToIgnore', i) as string;
+						const inputsToIgnore = rawInputsToIgnore.split(',').map((c) => c.trim());
+						fields = parseAutoMappedInputs(incomingKeys, inputsToIgnore, items[i].json);
+					} else if (dataToSend === 'defineInNode') {
+						const { properties } = this.getNodeParameter('fieldsToSend', i, []) as FieldsToSend;
+						throwOnZeroDefinedFields.call(this, properties);
+						fields = parseDefinedFields(properties);
+					}
+
+					body.records.push({ require, fields });
+				}
+
+				const docId = this.getNodeParameter('docId', 0) as string;
+				const tableId = this.getNodeParameter('tableId', 0) as string;
+				const endpoint = requestPath`/docs/${docId}/tables/${tableId}/records`;
+
+				const qs: IDataObject = {};
+				const onMany = this.getNodeParameter('onMany', 0, 'first') as string;
+				if (onMany !== 'first') {
+					qs.onmany = onMany;
+				}
+
+				const response = (await gristApiRequest.call(this, 'PUT', endpoint, body, qs)) as {
+					recordIds?: number[][];
+				} | null;
+
+				for (let i = 0; i < items.length; i++) {
+					// Older Grist versions return null, so fall back to the fields we sent
+					const id = response?.recordIds?.[i]?.[0];
+					returnData.push({
+						json:
+							id === undefined ? { ...body.records[i].fields } : { id, ...body.records[i].fields },
+						pairedItem: { item: i },
+					});
+				}
+			} catch (error) {
+				if (this.continueOnFail()) {
+					const itemData = generatePairedItemData(items.length);
+					const executionErrorData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData },
+					);
+					returnData.push(...executionErrorData);
+				} else {
+					throw error;
+				}
+			}
+
+			return [returnData];
+		}
+
+		for (let i = 0; i < items.length; i++) {
+			try {
 				if (operation === 'create') {
-
 					// ----------------------------------
 					//             create
 					// ----------------------------------
@@ -142,33 +245,27 @@ export class Grist implements INodeType {
 					const dataToSend = this.getNodeParameter('dataToSend', 0) as SendingOptions;
 
 					if (dataToSend === 'autoMapInputs') {
-
 						const incomingKeys = Object.keys(items[i].json);
 						const rawInputsToIgnore = this.getNodeParameter('inputsToIgnore', i) as string;
-						const inputsToIgnore = rawInputsToIgnore.split(',').map(c => c.trim());
+						const inputsToIgnore = rawInputsToIgnore.split(',').map((c) => c.trim());
 						const fields = parseAutoMappedInputs(incomingKeys, inputsToIgnore, items[i].json);
 						body.records.push({ fields });
-
 					} else if (dataToSend === 'defineInNode') {
-
 						const { properties } = this.getNodeParameter('fieldsToSend', i, []) as FieldsToSend;
 						throwOnZeroDefinedFields.call(this, properties);
 						body.records.push({ fields: parseDefinedFields(properties) });
-
 					}
 
 					const docId = this.getNodeParameter('docId', 0) as string;
 					const tableId = this.getNodeParameter('tableId', 0) as string;
-					const endpoint = `/docs/${docId}/tables/${tableId}/records`;
+					const endpoint = requestPath`/docs/${docId}/tables/${tableId}/records`;
 
 					responseData = await gristApiRequest.call(this, 'POST', endpoint, body);
 					responseData = {
 						id: responseData.records[0].id,
 						...body.records[0].fields,
 					};
-
 				} else if (operation === 'delete') {
-
 					// ----------------------------------
 					//            delete
 					// ----------------------------------
@@ -177,16 +274,17 @@ export class Grist implements INodeType {
 
 					const docId = this.getNodeParameter('docId', 0) as string;
 					const tableId = this.getNodeParameter('tableId', 0) as string;
-					const endpoint = `/docs/${docId}/tables/${tableId}/data/delete`;
+					const endpoint = requestPath`/docs/${docId}/tables/${tableId}/data/delete`;
 
 					const rawRowIds = (this.getNodeParameter('rowId', i) as string).toString();
-					const body = rawRowIds.split(',').map(c => c.trim()).map(Number);
+					const body = rawRowIds
+						.split(',')
+						.map((c) => c.trim())
+						.map(Number);
 
 					await gristApiRequest.call(this, 'POST', endpoint, body);
 					responseData = { success: true };
-
 				} else if (operation === 'update') {
-
 					// ----------------------------------
 					//            update
 					// ----------------------------------
@@ -199,34 +297,28 @@ export class Grist implements INodeType {
 					const dataToSend = this.getNodeParameter('dataToSend', 0) as SendingOptions;
 
 					if (dataToSend === 'autoMapInputs') {
-
 						const incomingKeys = Object.keys(items[i].json);
 						const rawInputsToIgnore = this.getNodeParameter('inputsToIgnore', i) as string;
-						const inputsToIgnore = rawInputsToIgnore.split(',').map(c => c.trim());
+						const inputsToIgnore = rawInputsToIgnore.split(',').map((c) => c.trim());
 						const fields = parseAutoMappedInputs(incomingKeys, inputsToIgnore, items[i].json);
 						body.records.push({ id: Number(rowId), fields });
-
 					} else if (dataToSend === 'defineInNode') {
-
 						const { properties } = this.getNodeParameter('fieldsToSend', i, []) as FieldsToSend;
 						throwOnZeroDefinedFields.call(this, properties);
 						const fields = parseDefinedFields(properties);
 						body.records.push({ id: Number(rowId), fields });
-
 					}
 
 					const docId = this.getNodeParameter('docId', 0) as string;
 					const tableId = this.getNodeParameter('tableId', 0) as string;
-					const endpoint = `/docs/${docId}/tables/${tableId}/records`;
+					const endpoint = requestPath`/docs/${docId}/tables/${tableId}/records`;
 
 					await gristApiRequest.call(this, 'PATCH', endpoint, body);
 					responseData = {
 						id: rowId,
 						...body.records[0].fields,
 					};
-
 				} else if (operation === 'getAll') {
-
 					// ----------------------------------
 					//             getAll
 					// ----------------------------------
@@ -235,17 +327,20 @@ export class Grist implements INodeType {
 
 					const docId = this.getNodeParameter('docId', 0) as string;
 					const tableId = this.getNodeParameter('tableId', 0) as string;
-					const endpoint = `/docs/${docId}/tables/${tableId}/records`;
+					const endpoint = requestPath`/docs/${docId}/tables/${tableId}/records`;
 
 					const qs: IDataObject = {};
 
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+					const returnAll = this.getNodeParameter('returnAll', i);
 
 					if (!returnAll) {
-						qs.limit = this.getNodeParameter('limit', i) as number;
+						qs.limit = this.getNodeParameter('limit', i);
 					}
 
-					const { sort, filter } = this.getNodeParameter('additionalOptions', i) as GristGetAllOptions;
+					const { sort, filter } = this.getNodeParameter(
+						'additionalOptions',
+						i,
+					) as GristGetAllOptions;
 
 					if (sort?.sortProperties.length) {
 						qs.sort = parseSortProperties(sort.sortProperties);
@@ -261,20 +356,25 @@ export class Grist implements INodeType {
 						return { id: data.id, ...(data.fields as object) };
 					});
 				}
-
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ error: error.message });
+					const executionData = this.helpers.constructExecutionMetaData(
+						this.helpers.returnJsonArray({ error: error.message }),
+						{ itemData: { item: i } },
+					);
+					returnData.push.apply(returnData, executionData);
+
 					continue;
 				}
 				throw error;
 			}
-
-			Array.isArray(responseData)
-				? returnData.push(...responseData)
-				: returnData.push(responseData);
+			const executionData = this.helpers.constructExecutionMetaData(
+				this.helpers.returnJsonArray(responseData as IDataObject[]),
+				{ itemData: { item: i } },
+			);
+			returnData.push.apply(returnData, executionData);
 		}
 
-		return [this.helpers.returnJsonArray(returnData)];
+		return [returnData];
 	}
 }

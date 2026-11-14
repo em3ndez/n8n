@@ -1,26 +1,27 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
-} from 'n8n-core';
-
-import {
-	IDataObject, NodeApiError, NodeOperationError,
+	IDataObject,
+	JsonObject,
+	IHttpRequestMethods,
+	IRequestOptions,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { NodeApiError, requestUrl } from 'n8n-workflow';
 
 /**
  * Make an API request to MSG91
  *
- * @param {IHookFunctions} this
- * @param {string} method
- * @param {string} url
- * @param {object} body
- * @returns {Promise<any>}
  */
-export async function msg91ApiRequest(this: IHookFunctions | IExecuteFunctions, method: string, endpoint: string, body: IDataObject, query?: IDataObject): Promise<any> { // tslint:disable-line:no-any
+export async function msg91ApiRequest(
+	this: IHookFunctions | IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
+	body: IDataObject,
+	query?: IDataObject,
+): Promise<any> {
 	const credentials = await this.getCredentials('msg91Api');
-	if (credentials === undefined) {
-		throw new NodeOperationError(this.getNode(), 'No credentials got returned!');
-	}
 
 	if (query === undefined) {
 		query = {};
@@ -28,17 +29,17 @@ export async function msg91ApiRequest(this: IHookFunctions | IExecuteFunctions, 
 
 	query.authkey = credentials.authkey as string;
 
-	const options = {
+	const options: WithRequestTarget<IRequestOptions, 'uri'> = {
 		method,
 		form: body,
 		qs: query,
-		uri: `https://api.msg91.com/api${endpoint}`,
+		uri: requestUrl`https://api.msg91.com/api${endpoint}`,
 		json: true,
 	};
 
 	try {
 		return await this.helpers.request(options);
 	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
+		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }

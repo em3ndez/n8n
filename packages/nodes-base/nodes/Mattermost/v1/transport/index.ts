@@ -1,59 +1,50 @@
-import {
+import type {
 	IExecuteFunctions,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-} from 'n8n-core';
-
-import {
 	GenericValue,
 	IDataObject,
+	IHttpRequestMethods,
 	IHttpRequestOptions,
-	NodeApiError,
-	NodeOperationError,
+	RequestPath,
+	WithRequestTarget,
 } from 'n8n-workflow';
+import { requestUrl } from 'n8n-workflow';
 
 /**
  * Make an API request to Mattermost
  */
 export async function apiRequest(
 	this: IHookFunctions | IExecuteFunctions | ILoadOptionsFunctions,
-	method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD',
-	endpoint: string,
+	method: IHttpRequestMethods,
+	endpoint: RequestPath,
 	body: IDataObject | GenericValue | GenericValue[] = {},
 	query: IDataObject = {},
 ) {
 	const credentials = await this.getCredentials('mattermostApi');
+	const baseUrl = (credentials.baseUrl as string).replace(/\/$/, '');
 
-	if (!credentials) {
-		throw new NodeOperationError(this.getNode(), 'No credentials returned!');
-	}
-
-	const options: IHttpRequestOptions = {
+	const options: WithRequestTarget<IHttpRequestOptions> = {
 		method,
 		body,
 		qs: query,
-		url: `${credentials.baseUrl}/api/v4/${endpoint}`,
+		url: requestUrl`${baseUrl}/api/v4/${endpoint}`,
 		headers: {
-			authorization: `Bearer ${credentials.accessToken}`,
 			'content-type': 'application/json; charset=utf-8',
 		},
+		skipSslCertificateValidation: credentials.allowUnauthorizedCerts as boolean,
 	};
 
-	try {
-		return await this.helpers.httpRequest(options);
-	} catch (error) {
-		throw new NodeApiError(this.getNode(), error);
-	}
+	return await this.helpers.httpRequestWithAuthentication.call(this, 'mattermostApi', options);
 }
 
 export async function apiRequestAllItems(
 	this: IExecuteFunctions | ILoadOptionsFunctions,
 	method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD',
-	endpoint: string,
+	endpoint: RequestPath,
 	body: IDataObject = {},
 	query: IDataObject = {},
 ) {
-
 	const returnData: IDataObject[] = [];
 
 	let responseData;
@@ -63,10 +54,8 @@ export async function apiRequestAllItems(
 	do {
 		responseData = await apiRequest.call(this, method, endpoint, body, query);
 		query.page++;
-		returnData.push.apply(returnData, responseData);
-	} while (
-		responseData.length !== 0
-	);
+		returnData.push.apply(returnData, responseData as IDataObject[]);
+	} while (responseData.length !== 0);
 
 	return returnData;
 }
